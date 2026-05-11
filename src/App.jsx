@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
-
+import { collection, addDoc } from "firebase/firestore";
+import { db } from "./firebase";
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const CATEGORIES = ["Ropa","Calzado","Alimentos","Bebidas","Electrónica","Ferretería","Limpieza","Papelería","Farmacia","Juguetes","Muebles","Otros"];
 
