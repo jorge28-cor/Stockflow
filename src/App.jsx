@@ -551,9 +551,23 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
   const [customPrice, setCustomPrice] = useState(editData?.unitPrice?.toString()||"");
   const isSale=type==="sale";
   const product=products.find(p=>p.id===productId);
-  const autoPrice=isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
-  const unitPrice=customPrice!==""?Number(customPrice):(autoPrice||0);
-  const total=product?Number(qty)*unitPrice:0;
+  const autoPrice = product
+  ? (
+      isSale
+        ? (
+            priceType === "wholesale"
+              ? product.priceWholesale
+              : product.price
+          )
+        : product.cost
+    )
+  : 0;
+
+const unitPrice = customPrice !== ""
+  ? Number(customPrice)
+  : (autoPrice || 0);
+
+const total = Number(qty || 0) * Number(unitPrice || 0);
   const isEdit=!!editData;
   return (
     <Modal title={isEdit?"✏️ Editar movimiento":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
