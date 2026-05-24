@@ -491,55 +491,6 @@ function QuickCash({ products, onSell, onClose }) {
   );
 }
 
-// ─── PRODUCT SEARCH INPUT ─────────────────────────────────────────────────────
-function ProductSearchInput({ products, value, onChange }) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const selected = products.find(p => p.id === value);
-  const filtered = products.filter(p =>
-    p.name.toLowerCase().includes(query.toLowerCase()) ||
-    (p.barcode && p.barcode.includes(query)) ||
-    (p.supplier && p.supplier.toLowerCase().includes(query.toLowerCase()))
-  );
-  return (
-    <div style={{ position:"relative" }}>
-      <div style={{ display:"flex", gap:8 }}>
-        <input
-          style={{ ...inp, flex:1 }}
-          value={open ? query : (selected ? selected.name : "")}
-          placeholder="🔍 Buscar producto..."
-          onFocus={() => { setOpen(true); setQuery(""); }}
-          onChange={e => { setQuery(e.target.value); setOpen(true); }}
-        />
-        {selected && !open && (
-          <div style={{ display:"flex", alignItems:"center", gap:4, background:C.greenBg, border:`1px solid ${C.border2}`, borderRadius:10, padding:"6px 12px", fontSize:12, color:C.green, fontWeight:700, whiteSpace:"nowrap" }}>
-            Stock: {selected.stock}
-          </div>
-        )}
-      </div>
-      {open && (
-        <div style={{ position:"absolute", top:"100%", left:0, right:0, background:C.card, border:`1.5px solid ${C.border2}`, borderRadius:14, zIndex:300, maxHeight:220, overflowY:"auto", boxShadow:C.shadowMd, marginTop:4 }}>
-          {filtered.length === 0 && (
-            <div style={{ padding:"14px 16px", color:C.muted, fontSize:13 }}>Sin resultados</div>
-          )}
-          {filtered.map(p => (
-            <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQuery(""); }}
-              style={{ width:"100%", background:p.id===value?C.greenBg:"transparent", border:"none", borderBottom:`1px solid ${C.border}`, padding:"12px 16px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:10 }}>
-              <ProductAvatar product={p} size={32} />
-              <div style={{ flex:1 }}>
-                <div style={{ fontWeight:700, fontSize:14, color:C.text }}>{p.name}</div>
-                <div style={{ fontSize:11, color:C.muted }}>{p.category} · Stock: <strong style={{ color: p.stock <= p.minStock ? C.red : C.green }}>{p.stock}</strong></div>
-              </div>
-              <div style={{ fontSize:13, fontWeight:800, color:C.green }}>{fmt(p.price)}</div>
-            </button>
-          ))}
-        </div>
-      )}
-      {open && <div style={{ position:"fixed", inset:0, zIndex:299 }} onClick={() => setOpen(false)} />}
-    </div>
-  );
-}
-
 // ─── MOVEMENT FORM ────────────────────────────────────────────────────────────
 function MovementForm({ type, products, preselected, editData, onSave, onClose, saving }) {
   const [productId, setProductId] = useState(editData?.productId||preselected?.id||products[0]?.id||"");
@@ -554,7 +505,6 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
   const autoPrice=isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
   const unitPrice=customPrice!==""?Number(customPrice):(autoPrice||0);
   const total=product?Number(qty)*unitPrice:0;
-  const isEdit=!!editData;
   return (
     <Modal title={isEdit?"✏️ Editar movimiento":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
       <Field label="Producto">
@@ -574,11 +524,6 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
         <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
         <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
       </div>
-      {!isSale && <Field label="💲 Precio de compra (por unidad)">
-        <input style={inp} type="number" min="0" value={customPrice}
-          onChange={e=>setCustomPrice(e.target.value)}
-          placeholder={`Costo guardado: $${autoPrice||0}`} />
-      </Field>}
       <Field label="Método de pago">
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
           {PAY_METHODS.map(m=>(
@@ -588,7 +533,11 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
             </button>
           ))}
         </div>
-      </Field>
+        {!isSale && <Field label="💲 Precio de compra (por unidad)">
+         <input style={inp} type="number" min="0" value={customPrice}
+          onChange={e=>setCustomPrice(e.target.value)}
+          placeholder={`Sugerido: ${autoPrice||0}`} />
+      </Field>}
       <Field label="Nota"><input style={inp} value={note} onChange={e=>setNote(e.target.value)} placeholder="Referencia, cliente..." /></Field>
       {product && <div style={{ background:C.greenBg, borderRadius:14, padding:16, marginBottom:16, border:`1px solid ${C.border2}` }}>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
