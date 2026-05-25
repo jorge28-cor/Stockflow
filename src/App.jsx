@@ -542,316 +542,119 @@ function ProductSearchInput({ products, value, onChange }) {
 
 // ─── MOVEMENT FORM ────────────────────────────────────────────────────────────
 function MovementForm({ type, products, preselected, editData, onSave, onClose, saving }) {
-  const [productId, setProductId] = useState(
-    editData?.productId || preselected?.id || products[0]?.id || ""
-  );
-
-  const [qty, setQty] = useState(
-    editData?.qty?.toString() || "1"
-  );
-
-  const [note, setNote] = useState(
-    editData?.note || ""
-  );
-
-  const [date, setDate] = useState(
-    editData?.date || todayStr()
-  );
-
+  const [productId, setProductId] = useState(editData?.productId||preselected?.id||products[0]?.id||"");
+  const [qty, setQty] = useState(editData?.qty?.toString()||"1");
+  const [note, setNote] = useState(editData?.note||"");
+  const [date, setDate] = useState(editData?.date||todayStr());
   const [priceType, setPriceType] = useState("retail");
-
-  const [payMethod, setPayMethod] = useState(
-    editData?.payMethod || "efectivo"
-  );
-
-  const [customPrice, setCustomPrice] = useState(
-    editData?.unitPrice?.toString() || ""
-  );
-
-  const isSale = type === "sale";
-
-  const product = products.find(
-    p => p.id === productId
-  );
-
-  // FIX ERROR PANTALLA NEGRA
-  const autoPrice = product
-    ? (
-        isSale
-          ? (
-              priceType === "wholesale"
-                ? product.priceWholesale
-                : product.price
-            )
-          : product.cost
-      )
-    : 0;
-
-  const unitPrice = customPrice !== ""
-    ? Number(customPrice)
-    : (autoPrice || 0);
-
-  const total = Number(qty || 0) * Number(unitPrice || 0);
-
-  const isEdit = !!editData;
-
+  const [payMethod, setPayMethod] = useState(editData?.payMethod||"efectivo");
+  const [customPrice, setCustomPrice] = useState(editData?.unitPrice?.toString()||"");
+  const isSale=type==="sale";
+  const product=products.find(p=>p.id===productId);
+  const autoPrice=isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
+  const unitPrice=customPrice!==""?Number(customPrice):(autoPrice||0);
+  const total=product?Number(qty)*unitPrice:0;
+  const isEdit=!!editData;
   return (
-    <Modal
-      title={
-        isEdit
-          ? "✏️ Editar movimiento"
-          : isSale
-            ? "📤 Nueva venta"
-            : "📥 Nueva compra"
-      }
-      onClose={onClose}
-    >
-
+    <Modal title={isEdit?"✏️ Editar movimiento":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
       <Field label="Producto">
-        <ProductSearchInput
-          products={products}
-          value={productId}
-          onChange={setProductId}
-        />
+        <ProductSearchInput products={products} value={productId} onChange={setProductId} />
       </Field>
-
-      {isSale && (
-        <Field label="Tipo de precio">
-          <div style={{ display:"flex", gap:8 }}>
-            {["retail","wholesale"].map(t => (
-              <button
-                key={t}
-                onClick={() => setPriceType(t)}
-                style={{
-                  ...btnSecondary(),
-                  flex:1,
-                  background:
-                    priceType === t
-                      ? C.greenBg
-                      : C.card2,
-                  borderColor:
-                    priceType === t
-                      ? C.green
-                      : C.border2,
-                  color:
-                    priceType === t
-                      ? C.green
-                      : C.muted
-                }}
-              >
-                {t === "retail"
-                  ? "🛍 Minorista"
-                  : "🏭 Mayorista"}
-              </button>
-            ))}
-          </div>
-        </Field>
-      )}
-
+      {isSale && <Field label="Tipo de precio">
+        <div style={{ display:"flex", gap:8 }}>
+          {["retail","wholesale"].map(t=>(
+            <button key={t} onClick={()=>setPriceType(t)}
+              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card2, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
+              {t==="retail"?"🛍 Minorista":"🏭 Mayorista"}
+            </button>
+          ))}
+        </div>
+      </Field>}
       <div style={{ display:"flex", gap:12 }}>
-        <div style={{ flex:1 }}>
-          <Field label="Cantidad">
-            <input
-              style={inp}
-              type="number"
-              min="1"
-              value={qty}
-              onChange={e => setQty(e.target.value)}
-            />
-          </Field>
-        </div>
-
-        <div style={{ flex:1 }}>
-          <Field label="Fecha">
-            <input
-              style={inp}
-              type="date"
-              value={date}
-              onChange={e => setDate(e.target.value)}
-            />
-          </Field>
-        </div>
+        <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
+        <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
       </div>
-
-      {!isSale && (
-        <Field label="💲 Precio de compra (por unidad)">
-          <input
-            style={inp}
-            type="number"
-            min="0"
-            value={customPrice}
-            onChange={e => setCustomPrice(e.target.value)}
-            placeholder={`Costo guardado: $${autoPrice || 0}`}
-          />
-        </Field>
-      )}
-
+      {!isSale && <Field label="💲 Precio de compra (por unidad)">
+        <input style={inp} type="number" min="0" value={customPrice}
+          onChange={e=>setCustomPrice(e.target.value)}
+          placeholder={`Costo guardado: $${autoPrice||0}`} />
+      </Field>}
       <Field label="Método de pago">
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-          {PAY_METHODS.map(m => (
-            <button
-              key={m.id}
-              onClick={() => setPayMethod(m.id)}
-              style={{
-                ...btnSecondary(),
-                flex:1,
-                minWidth:80,
-                background:
-                  payMethod === m.id
-                    ? `${m.color}12`
-                    : C.card2,
-                borderColor:
-                  payMethod === m.id
-                    ? m.color
-                    : C.border2,
-                color:
-                  payMethod === m.id
-                    ? m.color
-                    : C.muted
-              }}
-            >
+          {PAY_METHODS.map(m=>(
+            <button key={m.id} onClick={()=>setPayMethod(m.id)}
+              style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?`${m.color}12`:C.card2, borderColor:payMethod===m.id?m.color:C.border2, color:payMethod===m.id?m.color:C.muted }}>
               {m.label}
             </button>
           ))}
         </div>
       </Field>
-
-      <Field label="Nota">
-        <input
-          style={inp}
-          value={note}
-          onChange={e => setNote(e.target.value)}
-          placeholder="Referencia, cliente..."
-        />
-      </Field>
-
-      {product && (
-        <div
-          style={{
-            background:C.greenBg,
-            borderRadius:14,
-            padding:16,
-            marginBottom:16,
-            border:`1px solid ${C.border2}`
-          }}
-        >
-          <div
-            style={{
-              display:"flex",
-              justifyContent:"space-between",
-              marginBottom:6
-            }}
-          >
-            <span style={{ color:C.muted, fontSize:13 }}>
-              Precio unitario
-            </span>
-
-            <span
-              style={{
-                fontWeight:700,
-                color:C.text2
-              }}
-            >
-              {fmt(unitPrice)}
-            </span>
-          </div>
-
-          <div
-            style={{
-              display:"flex",
-              justifyContent:"space-between"
-            }}
-          >
-            <span style={{ color:C.muted, fontSize:13 }}>
-              Total
-            </span>
-
-            <span
-              style={{
-                fontWeight:900,
-                fontSize:24,
-                color:isSale ? C.green : C.blue
-              }}
-            >
-              {fmt(total)}
-            </span>
-          </div>
-
-          {isSale &&
-            !isEdit &&
-            product.stock < Number(qty) && (
-              <p
-                style={{
-                  color:C.red,
-                  fontSize:12,
-                  margin:"8px 0 0"
-                }}
-              >
-                ⚠ Stock insuficiente ({product.stock} disponibles)
-              </p>
-          )}
+      <Field label="Nota"><input style={inp} value={note} onChange={e=>setNote(e.target.value)} placeholder="Referencia, cliente..." /></Field>
+      {product && <div style={{ background:C.greenBg, borderRadius:14, padding:16, marginBottom:16, border:`1px solid ${C.border2}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+          <span style={{ color:C.muted, fontSize:13 }}>Precio unitario</span>
+          <span style={{ fontWeight:700, color:C.text2 }}>{fmt(unitPrice)}</span>
         </div>
-      )}
-
-      <button
-        onClick={() =>
-          onSave({
-            productId,
-            qty:Number(qty),
-            note,
-            date,
-            type,
-            unitPrice:unitPrice || 0,
-            total,
-            payMethod
-          })
-        }
-
-        disabled={
-          saving ||
-          (
-            isSale &&
-            !isEdit &&
-            product &&
-            product.stock < Number(qty)
-          )
-        }
-
-        style={{
-          ...btnPrimary(
-            isSale
-              ? {}
-              : {
-                  background:`linear-gradient(135deg,${C.blue},#1976d2)`
-                }
-          ),
-          width:"100%",
-          opacity:
-            (
-              saving ||
-              (
-                isSale &&
-                !isEdit &&
-                product &&
-                product.stock < Number(qty)
-              )
-            )
-              ? 0.5
-              : 1
-        }}
-      >
-        {saving
-          ? "Guardando..."
-          : isEdit
-            ? "Guardar cambios →"
-            : isSale
-              ? "Confirmar venta →"
-              : "Confirmar compra →"}
+        <div style={{ display:"flex", justifyContent:"space-between" }}>
+          <span style={{ color:C.muted, fontSize:13 }}>Total</span>
+          <span style={{ fontWeight:900, fontSize:24, color:isSale?C.green:C.blue }}>{fmt(total)}</span>
+        </div>
+        {isSale&&!isEdit&&product.stock<Number(qty)&&<p style={{ color:C.red, fontSize:12, margin:"8px 0 0" }}>⚠ Stock insuficiente ({product.stock} disponibles)</p>}
+      </div>}
+      <button onClick={()=>onSave({productId,qty:Number(qty),note,date,type,unitPrice:unitPrice||0,total,payMethod})}
+        disabled={saving||(isSale&&!isEdit&&product&&product.stock<Number(qty))}
+        style={{ ...btnPrimary(isSale?{}:{background:`linear-gradient(135deg,${C.blue},#1976d2)`}), width:"100%", opacity:(saving||(isSale&&!isEdit&&product&&product.stock<Number(qty)))?0.5:1 }}>
+        {saving?"Guardando...":isEdit?"Guardar cambios →":isSale?"Confirmar venta →":"Confirmar compra →"}
       </button>
-
     </Modal>
   );
 }
+
+// ─── CASH CLOSE ───────────────────────────────────────────────────────────────
+function CashClose({ movements, products, onClose }) {
+  const [selDate, setSelDate] = useState(todayStr());
+  const dayMovs=movements.filter(m=>m.date===selDate);
+  const sales=dayMovs.filter(m=>m.type==="sale");
+  const purchases=dayMovs.filter(m=>m.type==="purchase");
+  const totalSales=sales.reduce((s,m)=>s+m.total,0);
+  const totalPurchases=purchases.reduce((s,m)=>s+m.total,0);
+  const totalCost=sales.reduce((s,m)=>{ const p=products.find(pr=>pr.id===m.productId); return s+(p?.cost||0)*m.qty; },0);
+  const profit=totalSales-totalCost;
+  const byMethod=PAY_METHODS.map(m=>({...m,total:sales.filter(s=>s.payMethod===m.id).reduce((s,mv)=>s+mv.total,0)}));
+  return (
+    <Modal title="💰 Cierre de caja" onClose={onClose} wide>
+      <Field label="Fecha"><input style={inp} type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} /></Field>
+      <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:20 }}>
+        {[{l:"Ventas",v:fmt(totalSales),c:C.green,bg:C.greenBg},{l:"Compras",v:fmt(totalPurchases),c:C.blue,bg:C.blueBg},{l:"Costo",v:fmt(totalCost),c:C.yellow,bg:C.yellowBg},{l:"Ganancia",v:fmt(profit),c:profit>=0?C.green:C.red,bg:profit>=0?C.greenBg:C.redBg}].map(s=>(
+          <div key={s.l} style={{ flex:1, minWidth:110, background:s.bg, borderRadius:14, padding:14, border:`1px solid ${s.c}22` }}>
+            <p style={{ color:C.muted, fontSize:11, margin:"0 0 4px" }}>{s.l}</p>
+            <p style={{ color:s.c, fontWeight:800, fontSize:18, margin:0 }}>{s.v}</p>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
+        {byMethod.map(m=>(
+          <div key={m.id} style={{ flex:1, minWidth:90, background:`${m.color}10`, border:`1.5px solid ${m.color}33`, borderRadius:12, padding:12, textAlign:"center" }}>
+            <p style={{ color:C.muted, fontSize:11, margin:"0 0 4px" }}>{m.label}</p>
+            <p style={{ color:m.color, fontWeight:800, fontSize:15, margin:0 }}>{fmt(m.total)}</p>
+          </div>
+        ))}
+      </div>
+      {dayMovs.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:24 }}>Sin movimientos este día</p>
+        : dayMovs.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
+          <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:`1px solid ${C.border}` }}>
+            <div style={{ width:36, height:36, borderRadius:10, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>{m.type==="sale"?"📤":"📥"}</div>
+            <div style={{ flex:1 }}>
+              <p style={{ margin:0, fontSize:13, fontWeight:600, color:C.text }}>{p?.name}</p>
+              <p style={{ margin:0, color:C.muted, fontSize:11 }}>{m.note} · {m.qty} uds · {pm?.label}</p>
+            </div>
+            <span style={{ fontWeight:700, color:m.type==="sale"?C.green:C.blue }}>{fmt(m.total)}</span>
+          </div>
+        );})}
+    </Modal>
+  );
+}
+
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 function Login({ onLogin }) {
   const [email, setEmail] = useState("admin@controlpro.com");
