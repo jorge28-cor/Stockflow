@@ -155,7 +155,7 @@ function Card({ children, style={} }) {
 
 function Modal({ title, onClose, children, wide }) {
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(26,46,26,0.4)", backdropFilter:"blur(4px)", zIndex:200, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+    <div style={{ position:"fixed", inset:0, background:"rgba(26,46,26,0.4)", zIndex:200, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{ background:C.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:wide?700:520, maxHeight:"94dvh", overflow:"auto", boxShadow:C.shadowMd }}>
         {/* Handle bar */}
@@ -542,17 +542,19 @@ function ProductSearchInput({ products, value, onChange }) {
 
 // ─── MOVEMENT FORM ────────────────────────────────────────────────────────────
 function MovementForm({ type, products, preselected, editData, onSave, onClose, saving }) {
-  const [productId, setProductId] = useState(editData?.productId||preselected?.id||products[0]?.id||"");
+  const [productId, setProductId] = useState(editData?.productId || preselected?.id || "");
   const [qty, setQty] = useState(editData?.qty?.toString()||"1");
   const [note, setNote] = useState(editData?.note||"");
   const [date, setDate] = useState(editData?.date||todayStr());
   const [priceType, setPriceType] = useState("retail");
   const [payMethod, setPayMethod] = useState(editData?.payMethod||"efectivo");
-  const [customPrice, setCustomPrice] = useState(editData?.unitPrice?.toString()||"");
-  const isSale=type==="sale";
-  const product=products.find(p=>p.id===productId);
-  const autoPrice=isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
-  const unitPrice=customPrice!==""?Number(customPrice):(autoPrice||0);
+  const [customPrice, setCustomPrice] = useState("");
+  const isSale = type === "sale";
+  const product = products.find(p => p.id === productId);
+  const autoPrice = isSale
+    ? (priceType === "wholesale" ? product?.priceWholesale : product?.price)
+    : product?.cost;
+  const unitPrice = customPrice !== "" ? Number(customPrice) : (autoPrice || 0);
   const total=product?Number(qty)*unitPrice:0;
   const isEdit=!!editData;
   return (
@@ -574,11 +576,11 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
         <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
         <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
       </div>
-      {!isSale && <Field label="💲 Precio de compra (por unidad)">
+      <Field label={isSale ? "💲 Precio de venta (por unidad)" : "💲 Precio de compra (por unidad)"}>
         <input style={inp} type="number" min="0" value={customPrice}
-          onChange={e=>setCustomPrice(e.target.value)}
-          placeholder={`Costo guardado: $${autoPrice||0}`} />
-      </Field>}
+          onChange={e => setCustomPrice(e.target.value)}
+          placeholder={`${isSale ? "Precio" : "Costo"} guardado: ${fmt(autoPrice||0)}`} />
+      </Field>
       <Field label="Método de pago">
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
           {PAY_METHODS.map(m=>(
@@ -781,10 +783,25 @@ export default function App() {
     await fbDelete(COL.products,id); setProducts(ps=>ps.filter(p=>p.id!==id));
   };
 
-  const handleBarcode = (code) => {
-    const found=products.find(p=>p.barcode===code);
-    if(found){ setSearch(code); setTab("products"); } else alert(`Código ${code} no registrado.`);
-  };
+  const handleBarcode = async (code) => {
+  // Primero busca en los productos ya cargados
+  const found = products.find(p => p.barcode === code);
+  if (found) {
+    setSearch(found.name);
+    setTab("products");
+    return;
+  }
+  // Si no encuentra, busca directo en Firebase
+  const todos = await fbGetAll(COL.products);
+  const foundFb = todos.find(p => p.barcode === code);
+  if (foundFb) {
+    setProducts(ps => ps.some(p => p.id === foundFb.id) ? ps : [...ps, foundFb]);
+    setSearch(foundFb.name);
+    setTab("products");
+  } else {
+    alert(`Código ${code} no registrado en el sistema.\nPodés crear el producto y asignarle este código.`);
+  }
+};
 
   const filtMovements=movements.filter(m=>{ if(filterFrom&&m.date<filterFrom) return false; if(filterTo&&m.date>filterTo) return false; return true; });
 
