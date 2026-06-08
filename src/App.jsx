@@ -1,241 +1,15 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
+import { login, logout, onSessionChange } from "./firebase";
+import { useFirestore, fbAdd, fbUpdate, fbDelete, fbSet } from "./hooks/useFirestore";
+import { ControlProLogo, Loader, Card, Chip, Field, Modal, StatCard, ProductAvatar } from "./components/UI";
+import { C, PAY_METHODS, COL, SUPERADMIN_EMAIL, fmt, fmtDate, todayStr, inp, btnPrimary, btnSecondary, btnGhost } from "./constants";
 import {
   collection, addDoc, getDocs, updateDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp,
 } from "firebase/firestore";
-import {
-  login, logout, onSessionChange,
-  createUser, createNegocio, listNegocios, listUsers,
-  updateNegocio, updateUserProfile, db,
-} from "./firebase";
+import { db, createUser, createNegocio, listNegocios, listUsers, updateNegocio, updateUserProfile } from "./firebase";
+import { useRef, useCallback } from "react";
 
-const SUPERADMIN_EMAIL = "jorge21sb@gmail.com";
-
-const PAY_METHODS = [
-  { id:"efectivo", label:"💵 Efectivo", color:"#00a86b" },
-  { id:"tarjeta", label:"💳 Tarjeta", color:"#5c6bc0" },
-  { id:"transferencia", label:"📲 Transferencia", color:"#7c3aed" },
-];
-
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-const fmt = (n) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:0}).format(n||0);
-const fmtDate = (d) => new Date(d).toLocaleDateString("es-AR");
-const todayStr = () => new Date().toISOString().split("T")[0];
-const genId = (p) => `${p}${Date.now().toString(36).toUpperCase()}`;
-
-// ─── DESIGN SYSTEM — Light / Fintech ─────────────────────────────────────────
-const C = {
-  // Backgrounds
-  bg:       "#f0f4f0",      // fondo general verde muy suave
-  card:     "#ffffff",      // cards blancas
-  card2:    "#f7faf7",      // inputs y cards secundarias
-  cardGreen:"#e8f5e9",      // card con tinte verde claro
-
-  // Borders
-  border:   "#e0ece0",
-  border2:  "#d0e8d0",
-
-  // Text
-  text:     "#1a2e1a",      // texto principal verde muy oscuro
-  text2:    "#3a5a3a",      // texto secundario
-  muted:    "#7a9a7a",      // texto apagado
-
-  // Brand
-  green:    "#2e7d32",      // verde principal
-  greenL:   "#43a047",      // verde medio
-  greenXL:  "#a5d6a7",      // verde claro
-  greenBg:  "#e8f5e9",      // fondo verde suave
-
-  // Accents
-  red:      "#c62828",
-  redBg:    "#ffebee",
-  yellow:   "#f57f17",
-  yellowBg: "#fff8e1",
-  blue:     "#1565c0",
-  blueBg:   "#e3f2fd",
-  purple:   "#6a1b9a",
-  purpleBg: "#f3e5f5",
-
-  // Shadows
-  shadow:   "0 2px 12px rgba(46,125,50,0.08)",
-  shadowMd: "0 4px 20px rgba(46,125,50,0.12)",
-};
-
-const inp = {
-  width:"100%", background:C.card2, border:`1.5px solid ${C.border2}`,
-  color:C.text, borderRadius:12, padding:"12px 14px", fontSize:15,
-  boxSizing:"border-box", outline:"none", fontFamily:"inherit",
-  transition:"border-color 0.2s",
-};
-
-const btnPrimary = (extra={}) => ({
-  background:`linear-gradient(135deg,${C.green},${C.greenL})`,
-  border:"none", color:"#fff", borderRadius:14, padding:"14px 20px",
-  fontWeight:700, cursor:"pointer", fontSize:15, fontFamily:"inherit",
-  boxShadow:`0 4px 14px ${C.greenXL}`, ...extra,
-});
-const btnSecondary = (extra={}) => ({
-  background:C.card2, border:`1.5px solid ${C.border2}`,
-  color:C.text2, borderRadius:12, padding:"10px 16px",
-  fontWeight:600, cursor:"pointer", fontSize:14, fontFamily:"inherit", ...extra,
-});
-const btnGhost = (color, bg, extra={}) => ({
-  background:bg, border:`1.5px solid ${color}33`,
-  color, borderRadius:10, padding:"8px 12px",
-  fontWeight:700, cursor:"pointer", fontSize:13, fontFamily:"inherit", ...extra,
-});
-
-
-
-// ─── FIREBASE MULTI-TENANT ────────────────────────────────────────────────────
-const COL = { products:"productos", movements:"movimientos", categories:"categorias" };
-async function fbGetAll(bId, col) {
-  try { const s=await getDocs(collection(db,"negocios",bId,col)); return s.docs.map(d=>({id:d.id,...d.data()})); }
-  catch(e) { console.error(e); return []; }
-}
-async function fbAdd(bId, col, data) {
-  try { const r=await addDoc(collection(db,"negocios",bId,col),{...data,creadoEn:serverTimestamp()}); return r.id; }
-  catch(e) { console.error(e); return null; }
-}
-async function fbUpdate(bId, col, id, data) {
-  try { await updateDoc(doc(db,"negocios",bId,col,id),data); return true; }
-  catch(e) { console.error(e); return false; }
-}
-async function fbDelete(bId, col, id) {
-  try { await deleteDoc(doc(db,"negocios",bId,col,id)); return true; }
-  catch(e) { console.error(e); return false; }
-}
-async function fbSet(bId, col, id, data) {
-  try { await setDoc(doc(db,"negocios",bId,col,id),data); return true; }
-  catch(e) { console.error(e); return false; }
-}
-function fbListen(bId, col, cb) {
-  return onSnapshot(collection(db,"negocios",bId,col), s=>{
-    cb(s.docs.map(d=>({id:d.id,...d.data()})));
-  });
-}
-
-// ─── LOGO ─────────────────────────────────────────────────────────────────────
-function ControlProLogo({ size=40 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <path d="M50 8L88 22L88 52C88 72 70 88 50 95C30 88 12 72 12 52L12 22Z" fill={C.greenBg} stroke={C.green} strokeWidth="2.5"/>
-      <rect x="28" y="55" width="10" height="20" rx="2" fill={C.greenXL}/>
-      <rect x="44" y="42" width="10" height="33" rx="2" fill={C.greenL}/>
-      <rect x="60" y="32" width="10" height="43" rx="2" fill={C.green}/>
-      <path d="M30 52L55 30L72 38" stroke={C.green} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M65 28L75 36L63 40" stroke={C.green} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
-}
-
-// ─── PRODUCT AVATAR ───────────────────────────────────────────────────────────
-function ProductAvatar({ product, size=48 }) {
-  const palettes = [
-    ["#e8f5e9","#2e7d32"], ["#e3f2fd","#1565c0"], ["#f3e5f5","#6a1b9a"],
-    ["#fff8e1","#f57f17"], ["#fce4ec","#880e4f"], ["#e0f7fa","#006064"],
-  ];
-  const [bg, fg] = palettes[(product.name||"?").charCodeAt(0)%palettes.length];
-  const initials = (product.name||"?").split(" ").slice(0,2).map(w=>w[0]).join("").toUpperCase();
-  if (product.image) return <img src={product.image} alt={product.name} style={{ width:size, height:size, borderRadius:12, objectFit:"cover", flexShrink:0 }} />;
-  return (
-    <div style={{ width:size, height:size, borderRadius:12, background:bg, border:`1.5px solid ${fg}22`, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
-      <span style={{ color:fg, fontWeight:900, fontSize:size*0.33 }}>{initials}</span>
-    </div>
-  );
-}
-
-function Chip({ children, color, bg }) {
-  return <span style={{ background:bg||`${color}15`, color, borderRadius:20, padding:"3px 10px", fontSize:11, fontWeight:700, whiteSpace:"nowrap" }}>{children}</span>;
-}
-
-function Field({ label, children }) {
-  return (
-    <div style={{ marginBottom:16 }}>
-      <label style={{ display:"block", color:C.muted, fontSize:11, fontWeight:700, marginBottom:6, textTransform:"uppercase", letterSpacing:0.8 }}>{label}</label>
-      {children}
-    </div>
-  );
-}
-
-function Card({ children, style={} }) {
-  return <div style={{ background:C.card, borderRadius:18, padding:18, border:`1px solid ${C.border}`, boxShadow:C.shadow, ...style }}>{children}</div>;
-}
-
-function Modal({ title, onClose, children, wide }) {
-  return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(26,46,26,0.4)", backdropFilter:"blur(4px)", zIndex:200, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
-      onClick={e=>e.target===e.currentTarget&&onClose()}>
-      <div style={{ background:C.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:wide?700:520, maxHeight:"94dvh", overflow:"auto", boxShadow:C.shadowMd }}>
-        {/* Handle bar */}
-        <div style={{ display:"flex", justifyContent:"center", padding:"12px 0 4px" }}>
-          <div style={{ width:40, height:4, background:C.border2, borderRadius:4 }} />
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"8px 24px 0" }}>
-          <span style={{ color:C.text, fontWeight:800, fontSize:18 }}>{title}</span>
-          <button onClick={onClose} style={{ background:C.card2, border:"none", color:C.muted, borderRadius:10, padding:"6px 12px", cursor:"pointer", fontSize:15 }}>✕</button>
-        </div>
-        <div style={{ padding:"16px 24px 32px" }}>{children}</div>
-      </div>
-    </div>
-  );
-}
-
-// ─── LOADER ───────────────────────────────────────────────────────────────────
-function Loader({ text="Cargando..." }) {
-  return (
-    <div style={{ display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:60, gap:16 }}>
-      <div style={{ width:40, height:40, border:`3px solid ${C.border2}`, borderTop:`3px solid ${C.green}`, borderRadius:"50%", animation:"spin 0.8s linear infinite" }} />
-      <p style={{ color:C.muted, fontSize:14, margin:0 }}>{text}</p>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
-}
-
-// ─── STAT CARD ────────────────────────────────────────────────────────────────
-function StatCard({ label, value, color, bg, icon }) {
-  return (
-    <div style={{ background:bg||C.card, borderRadius:16, padding:16, border:`1px solid ${color}22`, boxShadow:C.shadow, flex:1, minWidth:140 }}>
-      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
-        <span style={{ fontSize:18 }}>{icon}</span>
-        <span style={{ color:C.muted, fontSize:12, fontWeight:600 }}>{label}</span>
-      </div>
-      <p style={{ color, fontWeight:800, fontSize:20, margin:0 }}>{value}</p>
-    </div>
-  );
-}
-
-
-// ─── CATEGORY MANAGER ─────────────────────────────────────────────────────────
-function CategoryManager({ businessId, categories, onUpdate, onClose }) {
-  const [list, setList] = useState([...categories]);
-  const [newCat, setNewCat] = useState("");
-  const [saving, setSaving] = useState(false);
-  const add = () => { const t=newCat.trim(); if(!t||list.includes(t)) return; setList(l=>[...l,t]); setNewCat(""); };
-  const remove = (c) => { if(c==="General") return alert("No se puede eliminar General."); setList(l=>l.filter(x=>x!==c)); };
-  const save = async () => { setSaving(true); await fbSet(businessId, COL.categories, "lista", {items:list}); onUpdate(list); setSaving(false); onClose(); };
-  return (
-    <Modal title="🗂 Mis categorías" onClose={onClose}>
-      <p style={{ color:C.muted, fontSize:13, margin:"0 0 16px" }}>Personalizá las categorías de tu negocio.</p>
-      <div style={{ display:"flex", gap:8, marginBottom:16 }}>
-        <input style={inp} value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Nueva categoría..." />
-        <button onClick={add} style={btnPrimary({padding:"12px 16px"})}>+ Agregar</button>
-      </div>
-      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:24 }}>
-        {list.map(c=>(
-          <div key={c} style={{ display:"flex", alignItems:"center", gap:6, background:C.greenBg, border:`1px solid ${C.border2}`, borderRadius:20, padding:"7px 14px" }}>
-            <span style={{ fontSize:13, fontWeight:600, color:C.text2 }}>{c}</span>
-            {c!=="General" && <button onClick={()=>remove(c)} style={{ background:"none", border:"none", color:C.red, cursor:"pointer", fontSize:14, padding:0 }}>✕</button>}
-          </div>
-        ))}
-      </div>
-      <button onClick={save} disabled={saving} style={{ ...btnPrimary(), width:"100%" }}>
-        {saving?"Guardando...":"Guardar categorías →"}
-      </button>
-    </Modal>
-  );
-}
-
-// ─── BARCODE SCANNER — ZXing ─────────────────────────────────────────────────
+// ─── BARCODE SCANNER ─────────────────────────────────────────────────────────
 function BarcodeScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
   const readerRef = useRef(null);
@@ -246,7 +20,7 @@ function BarcodeScanner({ onDetect, onClose }) {
     const start = async () => {
       try {
         if (!window.ZXing) {
-          await new Promise((res,rej) => {
+          await new Promise((res, rej) => {
             const s = document.createElement("script");
             s.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js";
             s.onload = res; s.onerror = rej;
@@ -255,10 +29,8 @@ function BarcodeScanner({ onDetect, onClose }) {
         }
         const hints = new Map();
         hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
-          window.ZXing.BarcodeFormat.EAN_13,
-          window.ZXing.BarcodeFormat.EAN_8,
-          window.ZXing.BarcodeFormat.CODE_128,
-          window.ZXing.BarcodeFormat.UPC_A,
+          window.ZXing.BarcodeFormat.EAN_13, window.ZXing.BarcodeFormat.EAN_8,
+          window.ZXing.BarcodeFormat.CODE_128, window.ZXing.BarcodeFormat.UPC_A,
           window.ZXing.BarcodeFormat.QR_CODE,
         ]);
         const reader = new window.ZXing.BrowserMultiFormatReader(hints);
@@ -274,9 +46,7 @@ function BarcodeScanner({ onDetect, onClose }) {
           active = false;
           setTimeout(() => { onDetect(code); onClose(); }, 300);
         });
-      } catch(e) {
-        setStatus("Cámara no disponible — usá el código manual");
-      }
+      } catch(e) { setStatus("Cámara no disponible — usá el código manual"); }
     };
     start();
     return () => { active = false; try { readerRef.current?.reset(); } catch{} };
@@ -313,8 +83,8 @@ function ImageUpload({ value, onChange }) {
   const [urlInput, setUrlInput] = useState("");
   const [tab, setTab] = useState("upload");
   const handleFile = (e) => {
-    const file=e.target.files[0]; if(!file) return;
-    const r=new FileReader(); r.onload=ev=>onChange(ev.target.result); r.readAsDataURL(file);
+    const file = e.target.files[0]; if (!file) return;
+    const r = new FileReader(); r.onload = ev => onChange(ev.target.result); r.readAsDataURL(file);
   };
   return (
     <div>
@@ -329,9 +99,10 @@ function ImageUpload({ value, onChange }) {
       </div>
       {tab==="upload" && (
         <div onClick={()=>fileRef.current.click()}
-          style={{ border:`2px dashed ${C.border2}`, borderRadius:14, padding:24, textAlign:"center", cursor:"pointer", background:C.card2, transition:"border-color 0.2s" }}>
-          {value ? <img src={value} alt="preview" style={{ maxHeight:120, maxWidth:"100%", borderRadius:10, objectFit:"contain" }} />
-            : <><div style={{ fontSize:36, marginBottom:8 }}>📷</div><p style={{ color:C.muted, fontSize:13, margin:0 }}>Tocá para subir una foto<br/><span style={{ fontSize:11 }}>JPG, PNG, WEBP</span></p></>}
+          style={{ border:`2px dashed ${C.border2}`, borderRadius:14, padding:24, textAlign:"center", cursor:"pointer", background:C.card2 }}>
+          {value
+            ? <img src={value} alt="preview" style={{ maxHeight:120, maxWidth:"100%", borderRadius:10, objectFit:"contain" }} />
+            : <><div style={{ fontSize:36, marginBottom:8 }}>📷</div><p style={{ color:C.muted, fontSize:13, margin:0 }}>Tocá para subir una foto</p></>}
           <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display:"none" }} />
         </div>
       )}
@@ -348,13 +119,89 @@ function ImageUpload({ value, onChange }) {
   );
 }
 
+// ─── PRODUCT SEARCH INPUT ─────────────────────────────────────────────────────
+function ProductSearchInput({ products, value, onChange }) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const selected = products.find(p => p.id === value);
+  const filtered = products.filter(p =>
+    p.name.toLowerCase().includes(query.toLowerCase()) ||
+    (p.barcode && p.barcode.includes(query)) ||
+    (p.supplier && p.supplier.toLowerCase().includes(query.toLowerCase()))
+  );
+  return (
+    <div style={{ position:"relative" }}>
+      <div style={{ display:"flex", gap:8 }}>
+        <input style={{ ...inp, flex:1 }}
+          value={open ? query : (selected ? selected.name : "")}
+          placeholder="🔍 Buscar producto..."
+          onFocus={() => { setOpen(true); setQuery(""); }}
+          onChange={e => { setQuery(e.target.value); setOpen(true); }}
+        />
+        {selected && !open && (
+          <div style={{ display:"flex", alignItems:"center", gap:4, background:C.greenBg, border:`1px solid ${C.border2}`, borderRadius:10, padding:"6px 12px", fontSize:12, color:C.green, fontWeight:700, whiteSpace:"nowrap" }}>
+            Stock: {selected.stock}
+          </div>
+        )}
+      </div>
+      {open && (
+        <div style={{ position:"absolute", top:"100%", left:0, right:0, background:C.card, border:`1.5px solid ${C.border2}`, borderRadius:14, zIndex:300, maxHeight:220, overflowY:"auto", boxShadow:C.shadowMd, marginTop:4 }}>
+          {filtered.length === 0 && <div style={{ padding:"14px 16px", color:C.muted, fontSize:13 }}>Sin resultados</div>}
+          {filtered.map(p => (
+            <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQuery(""); }}
+              style={{ width:"100%", background:p.id===value?C.greenBg:"transparent", border:"none", borderBottom:`1px solid ${C.border}`, padding:"12px 16px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:10 }}>
+              <ProductAvatar product={p} size={32} />
+              <div style={{ flex:1 }}>
+                <div style={{ fontWeight:700, fontSize:14, color:C.text }}>{p.name}</div>
+                <div style={{ fontSize:11, color:C.muted }}>Stock: <strong style={{ color: p.stock <= p.minStock ? C.red : C.green }}>{p.stock}</strong></div>
+              </div>
+              <div style={{ fontSize:13, fontWeight:800, color:C.green }}>{fmt(p.price)}</div>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && <div style={{ position:"fixed", inset:0, zIndex:1 }} onClick={()=>setOpen(false)} />}
+    </div>
+  );
+}
+
+// ─── CATEGORY MANAGER ─────────────────────────────────────────────────────────
+function CategoryManager({ businessId, categories, onUpdate, onClose }) {
+  const [list, setList] = useState([...categories]);
+  const [newCat, setNewCat] = useState("");
+  const [saving, setSaving] = useState(false);
+  const add = () => { const t=newCat.trim(); if(!t||list.includes(t)) return; setList(l=>[...l,t]); setNewCat(""); };
+  const remove = (c) => { if(c==="General") return alert("No se puede eliminar General."); setList(l=>l.filter(x=>x!==c)); };
+  const save = async () => { setSaving(true); await fbSet(businessId, COL.categories, "lista", {items:list}); onUpdate(list); setSaving(false); onClose(); };
+  return (
+    <Modal title="🗂 Mis categorías" onClose={onClose}>
+      <p style={{ color:C.muted, fontSize:13, margin:"0 0 16px" }}>Personalizá las categorías de tu negocio.</p>
+      <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+        <input style={inp} value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Nueva categoría..." />
+        <button onClick={add} style={btnPrimary({padding:"12px 16px"})}>+ Agregar</button>
+      </div>
+      <div style={{ display:"flex", flexWrap:"wrap", gap:8, marginBottom:24 }}>
+        {list.map(c=>(
+          <div key={c} style={{ display:"flex", alignItems:"center", gap:6, background:C.greenBg, border:`1px solid ${C.border2}`, borderRadius:20, padding:"7px 14px" }}>
+            <span style={{ fontSize:13, fontWeight:600, color:C.text2 }}>{c}</span>
+            {c!=="General" && <button onClick={()=>remove(c)} style={{ background:"none", border:"none", color:C.red, cursor:"pointer", fontSize:14, padding:0 }}>✕</button>}
+          </div>
+        ))}
+      </div>
+      <button onClick={save} disabled={saving} style={{ ...btnPrimary(), width:"100%" }}>
+        {saving?"Guardando...":"Guardar categorías →"}
+      </button>
+    </Modal>
+  );
+}
+
 // ─── PRODUCT FORM ─────────────────────────────────────────────────────────────
 function ProductForm({ initial, categories, onSave, onClose, saving }) {
   const def = { name:"", description:"", price:"", priceWholesale:"", cost:"", category:categories[0]||"General", supplier:"", stock:"0", minStock:"5", barcode:"", image:null };
-  const [f, setF] = useState(initial?{...initial}:def);
+  const [f, setF] = useState(initial ? {...initial} : def);
   const [showScanner, setShowScanner] = useState(false);
-  const set = (k,v) => setF(p=>({...p,[k]:v}));
-  const margin = f.price&&f.cost?(((f.price-f.cost)/f.price)*100).toFixed(1):0;
+  const set = (k, v) => setF(p => ({...p, [k]:v}));
+  const margin = f.price&&f.cost ? (((f.price-f.cost)/f.price)*100).toFixed(1) : 0;
   const mColor = Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red;
   return (
     <Modal title={initial?"✏️ Editar producto":"➕ Nuevo producto"} onClose={onClose}>
@@ -392,6 +239,72 @@ function ProductForm({ initial, categories, onSave, onClose, saving }) {
       </Field>
       <button onClick={()=>onSave(f)} disabled={saving||!f.name} style={{ ...btnPrimary(), width:"100%", opacity:saving||!f.name?0.6:1 }}>
         {saving?"Guardando...":initial?"Guardar cambios →":"Crear producto →"}
+      </button>
+    </Modal>
+  );
+}
+
+// ─── MOVEMENT FORM ────────────────────────────────────────────────────────────
+function MovementForm({ type, products, preselected, editData, onSave, onClose, saving }) {
+  const [productId, setProductId] = useState(editData?.productId||preselected?.id||products[0]?.id||"");
+  const [qty, setQty] = useState(editData?.qty?.toString()||"1");
+  const [note, setNote] = useState(editData?.note||"");
+  const [date, setDate] = useState(editData?.date||todayStr());
+  const [priceType, setPriceType] = useState("retail");
+  const [payMethod, setPayMethod] = useState(editData?.payMethod||"efectivo");
+  const [customPrice, setCustomPrice] = useState(editData?.unitPrice?.toString()||"");
+  const isSale = type==="sale";
+  const product = products.find(p=>p.id===productId);
+  const autoPrice = isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
+  const unitPrice = customPrice!==""?Number(customPrice):(autoPrice||0);
+  const total = product?Number(qty)*unitPrice:0;
+  const isEdit = !!editData;
+  return (
+    <Modal title={isEdit?"✏️ Editar movimiento":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
+      <Field label="Producto"><ProductSearchInput products={products} value={productId} onChange={setProductId} /></Field>
+      {isSale && <Field label="Tipo de precio">
+        <div style={{ display:"flex", gap:8 }}>
+          {["retail","wholesale"].map(t=>(
+            <button key={t} onClick={()=>setPriceType(t)}
+              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card2, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
+              {t==="retail"?"🛍 Minorista":"🏭 Mayorista"}
+            </button>
+          ))}
+        </div>
+      </Field>}
+      <div style={{ display:"flex", gap:12 }}>
+        <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
+        <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
+      </div>
+      {!isSale && <Field label="💲 Precio de compra (por unidad)">
+        <input style={inp} type="number" min="0" value={customPrice} onChange={e=>setCustomPrice(e.target.value)} placeholder={`Costo guardado: $${autoPrice||0}`} />
+      </Field>}
+      <Field label="Método de pago">
+        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
+          {PAY_METHODS.map(m=>(
+            <button key={m.id} onClick={()=>setPayMethod(m.id)}
+              style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?`${m.color}12`:C.card2, borderColor:payMethod===m.id?m.color:C.border2, color:payMethod===m.id?m.color:C.muted }}>
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </Field>
+      <Field label="Nota"><input style={inp} value={note} onChange={e=>setNote(e.target.value)} placeholder="Referencia, cliente..." /></Field>
+      {product && <div style={{ background:C.greenBg, borderRadius:14, padding:16, marginBottom:16, border:`1px solid ${C.border2}` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
+          <span style={{ color:C.muted, fontSize:13 }}>Precio unitario</span>
+          <span style={{ fontWeight:700, color:C.text2 }}>{fmt(unitPrice)}</span>
+        </div>
+        <div style={{ display:"flex", justifyContent:"space-between" }}>
+          <span style={{ color:C.muted, fontSize:13 }}>Total</span>
+          <span style={{ fontWeight:900, fontSize:24, color:isSale?C.green:C.blue }}>{fmt(total)}</span>
+        </div>
+        {isSale&&!isEdit&&product.stock<Number(qty)&&<p style={{ color:C.red, fontSize:12, margin:"8px 0 0" }}>⚠ Stock insuficiente ({product.stock} disponibles)</p>}
+      </div>}
+      <button onClick={()=>onSave({productId,qty:Number(qty),note,date,type,unitPrice:unitPrice||0,total,payMethod})}
+        disabled={saving||(isSale&&!isEdit&&product&&product.stock<Number(qty))}
+        style={{ ...btnPrimary(isSale?{}:{background:`linear-gradient(135deg,${C.blue},#1976d2)`}), width:"100%", opacity:(saving||(isSale&&!isEdit&&product&&product.stock<Number(qty)))?0.5:1 }}>
+        {saving?"Guardando...":isEdit?"Guardar cambios →":isSale?"Confirmar venta →":"Confirmar compra →"}
       </button>
     </Modal>
   );
@@ -519,136 +432,17 @@ function QuickCash({ products, onSell, onClose }) {
   );
 }
 
-// ─── PRODUCT SEARCH INPUT ─────────────────────────────────────────────────────
-function ProductSearchInput({ products, value, onChange }) {
-  const [query, setQuery] = useState("");
-  const [open, setOpen] = useState(false);
-  const selected = products.find(p => p.id === value);
-  const filtered = products.filter(p =>
-    p.name.toLowerCase().includes(query.toLowerCase()) ||
-    (p.barcode && p.barcode.includes(query)) ||
-    (p.supplier && p.supplier.toLowerCase().includes(query.toLowerCase()))
-  );
-  return (
-    <div style={{ position:"relative" }}>
-      <div style={{ display:"flex", gap:8 }}>
-        <input
-          style={{ ...inp, flex:1 }}
-          value={open ? query : (selected ? selected.name : "")}
-          placeholder="🔍 Buscar producto..."
-          onFocus={() => { setOpen(true); setQuery(""); }}
-          onChange={e => { setQuery(e.target.value); setOpen(true); }}
-        />
-        {selected && !open && (
-          <div style={{ display:"flex", alignItems:"center", gap:4, background:C.greenBg, border:`1px solid ${C.border2}`, borderRadius:10, padding:"6px 12px", fontSize:12, color:C.green, fontWeight:700, whiteSpace:"nowrap" }}>
-            Stock: {selected.stock}
-          </div>
-        )}
-      </div>
-      {open && (
-        <div style={{ position:"absolute", top:"100%", left:0, right:0, background:C.card, border:`1.5px solid ${C.border2}`, borderRadius:14, zIndex:300, maxHeight:220, overflowY:"auto", boxShadow:C.shadowMd, marginTop:4 }}>
-          {filtered.length === 0 && (
-            <div style={{ padding:"14px 16px", color:C.muted, fontSize:13 }}>Sin resultados</div>
-          )}
-          {filtered.map(p => (
-            <button key={p.id} onClick={() => { onChange(p.id); setOpen(false); setQuery(""); }}
-              style={{ width:"100%", background:p.id===value?C.greenBg:"transparent", border:"none", borderBottom:`1px solid ${C.border}`, padding:"12px 16px", textAlign:"left", cursor:"pointer", display:"flex", alignItems:"center", gap:10 }}>
-              <ProductAvatar product={p} size={32} />
-              <div style={{ flex:1 }}>
-                <div style={{ fontWeight:700, fontSize:14, color:C.text }}>{p.name}</div>
-                <div style={{ fontSize:11, color:C.muted }}>{p.category} · Stock: <strong style={{ color: p.stock <= p.minStock ? C.red : C.green }}>{p.stock}</strong></div>
-              </div>
-              <div style={{ fontSize:13, fontWeight:800, color:C.green }}>{fmt(p.price)}</div>
-            </button>
-          ))}
-        </div>
-      )}
-      {open && <div style={{ position:"fixed", inset:0, zIndex:1, background:"transparent" }} onClick={()=>setOpen(false)} />}
-    </div>
-  );
-}
-
-// ─── MOVEMENT FORM ────────────────────────────────────────────────────────────
-function MovementForm({ type, products, preselected, editData, onSave, onClose, saving }) {
-  const [productId, setProductId] = useState(editData?.productId||preselected?.id||products[0]?.id||"");
-  const [qty, setQty] = useState(editData?.qty?.toString()||"1");
-  const [note, setNote] = useState(editData?.note||"");
-  const [date, setDate] = useState(editData?.date||todayStr());
-  const [priceType, setPriceType] = useState("retail");
-  const [payMethod, setPayMethod] = useState(editData?.payMethod||"efectivo");
-  const [customPrice, setCustomPrice] = useState(editData?.unitPrice?.toString()||"");
-  const isSale=type==="sale";
-  const product=products.find(p=>p.id===productId);
-  const autoPrice=isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
-  const unitPrice=customPrice!==""?Number(customPrice):(autoPrice||0);
-  const total=product?Number(qty)*unitPrice:0;
-  const isEdit=!!editData;
-  return (
-    <Modal title={isEdit?"✏️ Editar movimiento":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
-      <Field label="Producto">
-        <ProductSearchInput products={products} value={productId} onChange={setProductId} />
-      </Field>
-      {isSale && <Field label="Tipo de precio">
-        <div style={{ display:"flex", gap:8 }}>
-          {["retail","wholesale"].map(t=>(
-            <button key={t} onClick={()=>setPriceType(t)}
-              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card2, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
-              {t==="retail"?"🛍 Minorista":"🏭 Mayorista"}
-            </button>
-          ))}
-        </div>
-      </Field>}
-      <div style={{ display:"flex", gap:12 }}>
-        <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
-        <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
-      </div>
-      {!isSale && <Field label="💲 Precio de compra (por unidad)">
-        <input style={inp} type="number" min="0" value={customPrice}
-          onChange={e=>setCustomPrice(e.target.value)}
-          placeholder={`Costo guardado: $${autoPrice||0}`} />
-      </Field>}
-      <Field label="Método de pago">
-        <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
-          {PAY_METHODS.map(m=>(
-            <button key={m.id} onClick={()=>setPayMethod(m.id)}
-              style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?`${m.color}12`:C.card2, borderColor:payMethod===m.id?m.color:C.border2, color:payMethod===m.id?m.color:C.muted }}>
-              {m.label}
-            </button>
-          ))}
-        </div>
-      </Field>
-      <Field label="Nota"><input style={inp} value={note} onChange={e=>setNote(e.target.value)} placeholder="Referencia, cliente..." /></Field>
-      {product && <div style={{ background:C.greenBg, borderRadius:14, padding:16, marginBottom:16, border:`1px solid ${C.border2}` }}>
-        <div style={{ display:"flex", justifyContent:"space-between", marginBottom:6 }}>
-          <span style={{ color:C.muted, fontSize:13 }}>Precio unitario</span>
-          <span style={{ fontWeight:700, color:C.text2 }}>{fmt(unitPrice)}</span>
-        </div>
-        <div style={{ display:"flex", justifyContent:"space-between" }}>
-          <span style={{ color:C.muted, fontSize:13 }}>Total</span>
-          <span style={{ fontWeight:900, fontSize:24, color:isSale?C.green:C.blue }}>{fmt(total)}</span>
-        </div>
-        {isSale&&!isEdit&&product.stock<Number(qty)&&<p style={{ color:C.red, fontSize:12, margin:"8px 0 0" }}>⚠ Stock insuficiente ({product.stock} disponibles)</p>}
-      </div>}
-      <button onClick={()=>onSave({productId,qty:Number(qty),note,date,type,unitPrice:unitPrice||0,total,payMethod})}
-        disabled={saving||(isSale&&!isEdit&&product&&product.stock<Number(qty))}
-        style={{ ...btnPrimary(isSale?{}:{background:`linear-gradient(135deg,${C.blue},#1976d2)`}), width:"100%", opacity:(saving||(isSale&&!isEdit&&product&&product.stock<Number(qty)))?0.5:1 }}>
-        {saving?"Guardando...":isEdit?"Guardar cambios →":isSale?"Confirmar venta →":"Confirmar compra →"}
-      </button>
-    </Modal>
-  );
-}
-
 // ─── CASH CLOSE ───────────────────────────────────────────────────────────────
 function CashClose({ movements, products, onClose }) {
   const [selDate, setSelDate] = useState(todayStr());
-  const dayMovs=movements.filter(m=>m.date===selDate);
-  const sales=dayMovs.filter(m=>m.type==="sale");
-  const purchases=dayMovs.filter(m=>m.type==="purchase");
-  const totalSales=sales.reduce((s,m)=>s+m.total,0);
-  const totalPurchases=purchases.reduce((s,m)=>s+m.total,0);
-  const totalCost=sales.reduce((s,m)=>{ const p=products.find(pr=>pr.id===m.productId); return s+(p?.cost||0)*m.qty; },0);
-  const profit=totalSales-totalCost;
-  const byMethod=PAY_METHODS.map(m=>({...m,total:sales.filter(s=>s.payMethod===m.id).reduce((s,mv)=>s+mv.total,0)}));
+  const dayMovs = movements.filter(m=>m.date===selDate);
+  const sales = dayMovs.filter(m=>m.type==="sale");
+  const purchases = dayMovs.filter(m=>m.type==="purchase");
+  const totalSales = sales.reduce((s,m)=>s+m.total,0);
+  const totalPurchases = purchases.reduce((s,m)=>s+m.total,0);
+  const totalCost = sales.reduce((s,m)=>{ const p=products.find(pr=>pr.id===m.productId); return s+(p?.cost||0)*m.qty; },0);
+  const profit = totalSales-totalCost;
+  const byMethod = PAY_METHODS.map(m=>({...m,total:sales.filter(s=>s.payMethod===m.id).reduce((s,mv)=>s+mv.total,0)}));
   return (
     <Modal title="💰 Cierre de caja" onClose={onClose} wide>
       <Field label="Fecha"><input style={inp} type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} /></Field>
@@ -668,7 +462,8 @@ function CashClose({ movements, products, onClose }) {
           </div>
         ))}
       </div>
-      {dayMovs.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:24 }}>Sin movimientos este día</p>
+      {dayMovs.length===0
+        ? <p style={{ color:C.muted, textAlign:"center", padding:24 }}>Sin movimientos este día</p>
         : dayMovs.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
           <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:`1px solid ${C.border}` }}>
             <div style={{ width:36, height:36, borderRadius:10, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>{m.type==="sale"?"📤":"📥"}</div>
@@ -682,9 +477,6 @@ function CashClose({ movements, products, onClose }) {
     </Modal>
   );
 }
-
-// ─── LOGIN ────────────────────────────────────────────────────────────────────
-
 
 // ─── SUPERADMIN PANEL ─────────────────────────────────────────────────────────
 function SuperadminPanel() {
@@ -820,10 +612,7 @@ function MainApp({ session }) {
   const isAdmin = perfil?.rol === "admin" || isSuperadmin;
 
   const [tab, setTab] = useState("dashboard");
-  const [products, setProducts] = useState([]);
-  const [movements, setMovements] = useState([]);
-  const [categories, setCategories] = useState(["General"]);
-  const [loading, setLoading] = useState(true);
+  const { products, movements, categories, setCategories, loading } = useFirestore(businessId);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("Todas");
@@ -839,39 +628,25 @@ function MainApp({ session }) {
   const [showQuickCash, setShowQuickCash] = useState(false);
   const [showCatManager, setShowCatManager] = useState(false);
 
-  useEffect(() => {
-    if (!businessId) { setLoading(false); return; }
-    let u1, u2;
-    const load = async () => {
-      setLoading(true);
-      const cats = await fbGetAll(businessId, COL.categories);
-      if (cats.length>0 && cats[0].items) setCategories(cats[0].items);
-      u1 = fbListen(businessId, COL.products, data => { setProducts(data); setLoading(false); });
-      u2 = fbListen(businessId, COL.movements, data => { setMovements(data.sort((a,b)=>(b.date||"").localeCompare(a.date||""))); });
-    };
-    load();
-    return () => { u1?.(); u2?.(); };
-  }, [businessId]);
-
-  const todaySales=movements.filter(m=>m.type==="sale"&&m.date===todayStr()).reduce((s,m)=>s+m.total,0);
-  const totalSales=movements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0);
-  const totalCost=movements.filter(m=>m.type==="sale").reduce((s,m)=>{ const p=products.find(pr=>pr.id===m.productId); return s+(p?.cost||0)*m.qty; },0);
-  const totalProfit=totalSales-totalCost;
-  const lowStock=products.filter(p=>p.stock<=p.minStock);
-  const inventoryValue=products.reduce((s,p)=>s+p.stock*(p.cost||0),0);
-  const rentData=products.map(p=>{
-    const sold=movements.filter(m=>m.productId===p.id&&m.type==="sale").reduce((s,m)=>s+m.qty,0);
-    const revenue=movements.filter(m=>m.productId===p.id&&m.type==="sale").reduce((s,m)=>s+m.total,0);
-    const profit=revenue-sold*(p.cost||0);
-    const margin=revenue?((profit/revenue)*100).toFixed(1):0;
-    const rotation=sold>5?"Alta":sold>0?"Media":"Baja";
+  const todaySales = movements.filter(m=>m.type==="sale"&&m.date===todayStr()).reduce((s,m)=>s+m.total,0);
+  const totalSales = movements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0);
+  const totalCost = movements.filter(m=>m.type==="sale").reduce((s,m)=>{ const p=products.find(pr=>pr.id===m.productId); return s+(p?.cost||0)*m.qty; },0);
+  const totalProfit = totalSales-totalCost;
+  const lowStock = products.filter(p=>p.stock<=p.minStock);
+  const inventoryValue = products.reduce((s,p)=>s+p.stock*(p.cost||0),0);
+  const rentData = products.map(p=>{
+    const sold = movements.filter(m=>m.productId===p.id&&m.type==="sale").reduce((s,m)=>s+m.qty,0);
+    const revenue = movements.filter(m=>m.productId===p.id&&m.type==="sale").reduce((s,m)=>s+m.total,0);
+    const profit = revenue-sold*(p.cost||0);
+    const margin = revenue?((profit/revenue)*100).toFixed(1):0;
+    const rotation = sold>5?"Alta":sold>0?"Media":"Baja";
     return {...p,sold,revenue,profit,margin,rotation};
   }).sort((a,b)=>b.profit-a.profit);
 
   const saveProduct = async (data) => {
     setSaving(true);
-    const parsed={...data,price:Number(data.price),priceWholesale:Number(data.priceWholesale),cost:Number(data.cost),stock:Number(data.stock),minStock:Number(data.minStock),image:data.image||null};
-    if(editProduct){ await fbUpdate(businessId,COL.products,editProduct.id,parsed); }
+    const parsed = {...data,price:Number(data.price),priceWholesale:Number(data.priceWholesale),cost:Number(data.cost),stock:Number(data.stock),minStock:Number(data.minStock),image:data.image||null};
+    if(editProduct) { await fbUpdate(businessId,COL.products,editProduct.id,parsed); }
     else { await fbAdd(businessId,COL.products,parsed); }
     setSaving(false); setShowProductForm(false); setEditProduct(null);
   };
@@ -879,16 +654,16 @@ function MainApp({ session }) {
   const saveMovement = async (data) => {
     setSaving(true);
     if(editMovement){
-      const old=movements.find(m=>m.id===editMovement.id);
-      const sr=old.type==="sale"?old.qty:-old.qty;
-      const oldProd=products.find(p=>p.id===old.productId);
+      const old = movements.find(m=>m.id===editMovement.id);
+      const sr = old.type==="sale"?old.qty:-old.qty;
+      const oldProd = products.find(p=>p.id===old.productId);
       if(oldProd){ await fbUpdate(businessId,COL.products,old.productId,{stock:oldProd.stock+sr}); }
       await fbUpdate(businessId,COL.movements,editMovement.id,data);
       setEditMovement(null);
     } else {
       await fbAdd(businessId,COL.movements,data);
     }
-    const product=products.find(p=>p.id===data.productId);
+    const product = products.find(p=>p.id===data.productId);
     if(product){ const ns=data.type==="sale"?product.stock-data.qty:product.stock+data.qty; await fbUpdate(businessId,COL.products,data.productId,{stock:ns}); }
     setSaving(false); setShowMovForm(null); setPreselProduct(null);
   };
@@ -897,7 +672,7 @@ function MainApp({ session }) {
     if(!window.confirm("¿Eliminar este movimiento?")) return;
     setSaving(true);
     await fbDelete(businessId,COL.movements,mov.id);
-    const product=products.find(p=>p.id===mov.productId);
+    const product = products.find(p=>p.id===mov.productId);
     if(product){ const ns=mov.type==="sale"?product.stock+mov.qty:product.stock-mov.qty; await fbUpdate(businessId,COL.products,mov.productId,{stock:ns}); }
     setSaving(false);
   };
@@ -908,19 +683,21 @@ function MainApp({ session }) {
   };
 
   const handleBarcode = (code) => {
-    const clean = (v) => String(v || "").trim();
-    const p = products.find(pr => clean(pr.barcode) === clean(code));
-    if (p) { setSearch(code); setTab("products"); }
-    else { alert(`Código ${code} no encontrado`); }
+    const p = products.find(pr => String(pr.barcode||"").trim() === String(code).trim());
+    if(p){ setSearch(code); setTab("products"); } else { alert(`Código ${code} no encontrado`); }
   };
 
-  const filtMovements=movements.filter(m=>{ if(filterFrom&&m.date<filterFrom) return false; if(filterTo&&m.date>filterTo) return false; return true; });
+  const filtMovements = movements.filter(m=>{
+    if(filterFrom&&m.date<filterFrom) return false;
+    if(filterTo&&m.date>filterTo) return false;
+    return true;
+  });
 
-  const navItems=[
-    {id:"dashboard",icon:"◈",label:"Panel"},
-    {id:"products",icon:"⊞",label:"Productos"},
-    {id:"movements",icon:"⇅",label:"Movimientos"},
-    {id:"rentability",icon:"◉",label:"Rent."},
+  const navItems = [
+    {id:"dashboard", icon:"◈", label:"Panel"},
+    {id:"products",  icon:"⊞", label:"Productos"},
+    {id:"movements", icon:"⇅", label:"Movimientos"},
+    {id:"rentability",icon:"◉", label:"Rent."},
     ...(isSuperadmin?[{id:"superadmin",icon:"⚙",label:"Admin"}]:[]),
   ];
 
@@ -952,7 +729,6 @@ function MainApp({ session }) {
       {/* CONTENT */}
       <div style={{ flex:1, padding:"16px 16px 90px", width:"100%", maxWidth:960, margin:"0 auto", boxSizing:"border-box" }}>
 
-        {/* SUPERADMIN PAGE */}
         {tab==="superadmin" && isSuperadmin && (
           <div>
             <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>⚙ Panel Superadmin</h2>
@@ -960,7 +736,6 @@ function MainApp({ session }) {
           </div>
         )}
 
-        {/* NO BUSINESS ASSIGNED */}
         {tab!=="superadmin" && !businessId && (
           <Card style={{ textAlign:"center", padding:40 }}>
             <p style={{ fontSize:32, margin:"0 0 12px" }}>🏢</p>
@@ -971,249 +746,242 @@ function MainApp({ session }) {
 
         {tab!=="superadmin" && businessId && (loading ? <Loader text="Cargando datos desde la nube..." /> : <>
 
-        {/* ── DASHBOARD */}
-        {tab==="dashboard" && <div>
-          <div style={{ marginBottom:20 }}>
-            <h2 style={{ fontSize:22, fontWeight:900, margin:"0 0 2px", color:C.text }}>Hola, {perfil?.nombre?.split(" ")[0] || "Admin"} 👋</h2>
-            <p style={{ color:C.muted, margin:0, fontSize:13 }}>{new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})}</p>
-          </div>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-            <StatCard label="Ventas hoy" value={fmt(todaySales)} color={C.green} bg={C.greenBg} icon="💰" />
-            <StatCard label="Total ventas" value={fmt(totalSales)} color={C.blue} bg={C.blueBg} icon="📈" />
-            <StatCard label="Ganancia" value={fmt(totalProfit)} color={C.purple} bg={C.purpleBg} icon="💵" />
-            <StatCard label="Inventario" value={fmt(inventoryValue)} color={C.yellow} bg={C.yellowBg} icon="🏪" />
-          </div>
-          {lowStock.length>0 && (
-            <div style={{ background:C.redBg, border:`1.5px solid ${C.red}33`, borderRadius:16, padding:16, marginBottom:16 }}>
-              <p style={{ color:C.red, fontWeight:700, margin:"0 0 10px", fontSize:13 }}>⚠ Productos con bajo stock</p>
-              <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                {lowStock.map(p=>(
-                  <div key={p.id} style={{ background:C.card, borderRadius:10, padding:"7px 12px", display:"flex", alignItems:"center", gap:8, boxShadow:C.shadow }}>
-                    <ProductAvatar product={p} size={22} />
-                    <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{p.name}</span>
-                    <Chip color={C.red} bg={C.redBg}>{p.stock}/{p.minStock}</Chip>
-                  </div>
-                ))}
-              </div>
+          {/* DASHBOARD */}
+          {tab==="dashboard" && <div>
+            <div style={{ marginBottom:20 }}>
+              <h2 style={{ fontSize:22, fontWeight:900, margin:"0 0 2px", color:C.text }}>Hola, {perfil?.nombre?.split(" ")[0] || "Admin"} 👋</h2>
+              <p style={{ color:C.muted, margin:0, fontSize:13 }}>{new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})}</p>
             </div>
-          )}
-          {products.length===0 && (
-            <Card style={{ textAlign:"center", padding:32, marginBottom:16 }}>
-              <p style={{ fontSize:40, margin:"0 0 10px" }}>📦</p>
-              <p style={{ color:C.muted, fontSize:14, margin:"0 0 16px" }}>Empezá agregando tu primer producto</p>
-              {isAdmin && <button onClick={()=>{ setTab("products"); setShowProductForm(true); }} style={btnPrimary()}>+ Agregar primer producto</button>}
-            </Card>
-          )}
-          {products.length>0 && (
-            <Card style={{ marginBottom:16 }}>
-              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>🏆 Productos destacados</p>
-              {rentData.slice(0,5).map((p,i)=>(
-                <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom:i<4?`1px solid ${C.border}`:"none" }}>
-                  <span style={{ color:C.muted, width:18, fontSize:12, fontWeight:700 }}>#{i+1}</span>
-                  <ProductAvatar product={p} size={36} />
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <p style={{ margin:0, fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</p>
-                    <p style={{ margin:0, color:C.muted, fontSize:12 }}>{p.sold} vendidas · {p.margin}% margen</p>
-                  </div>
-                  <span style={{ color:C.green, fontWeight:800, fontSize:14 }}>{fmt(p.profit)}</span>
-                </div>
-              ))}
-            </Card>
-          )}
-          <div style={{ display:"flex", gap:10 }}>
-            <button onClick={()=>setShowMovForm("sale")} style={{ ...btnPrimary(), flex:1, fontSize:14 }}>+ Nueva venta</button>
-            {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={{ ...btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`}), flex:1, fontSize:14 }}>+ Compra</button>}
-          </div>
-        </div>}
-
-        {/* ── PRODUCTS */}
-        {tab==="products" && <div>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-            <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Productos</h2>
-            <div style={{ display:"flex", gap:8 }}>
-              {isAdmin && <button onClick={()=>setShowCatManager(true)} style={btnSecondary({padding:"8px 12px",fontSize:13})}>🗂 Categorías</button>}
-              {isAdmin && <button onClick={()=>{ setEditProduct(null); setShowProductForm(true); }} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Nuevo</button>}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+              <StatCard label="Ventas hoy"   value={fmt(todaySales)}    color={C.green}  bg={C.greenBg}  icon="💰" />
+              <StatCard label="Total ventas" value={fmt(totalSales)}    color={C.blue}   bg={C.blueBg}   icon="📈" />
+              <StatCard label="Ganancia"     value={fmt(totalProfit)}   color={C.purple} bg={C.purpleBg} icon="💵" />
+              <StatCard label="Inventario"   value={fmt(inventoryValue)}color={C.yellow} bg={C.yellowBg} icon="🏪" />
             </div>
-          </div>
-          <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar producto..." style={{ ...inp, flex:1 }} />
-            <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"12px 14px"})}>📷</button>
-          </div>
-          <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
-            {["Todas",...categories].map(c=>(
-              <button key={c} onClick={()=>setFilterCat(c)}
-                style={{ background:filterCat===c?C.green:C.card, border:`1.5px solid ${filterCat===c?C.green:C.border}`, color:filterCat===c?"#fff":C.text2, borderRadius:20, padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
-                {c}
-              </button>
-            ))}
-          </div>
-          {products.length===0 && (
-            <Card style={{ textAlign:"center", padding:28 }}>
-              <p style={{ color:C.muted, fontSize:14, margin:"0 0 16px" }}>No hay productos todavía.</p>
-              {isAdmin && <button onClick={()=>setShowProductForm(true)} style={btnPrimary()}>+ Crear primer producto</button>}
-            </Card>
-          )}
-          <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-            {products.filter(p=>{
-              const ms=p.name.toLowerCase().includes(search.toLowerCase())||p.barcode?.includes(search)||p.supplier?.toLowerCase().includes(search.toLowerCase());
-              return ms&&(filterCat==="Todas"||p.category===filterCat);
-            }).map(p=>{
-              const isLow=p.stock<=p.minStock;
-              const margin=p.price&&p.cost?(((p.price-p.cost)/p.price)*100).toFixed(0):0;
-              return (
-                <div key={p.id} style={{ background:C.card, borderRadius:16, padding:14, border:`1.5px solid ${isLow?C.red+"55":C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
-                  <ProductAvatar product={p} size={54} />
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
-                      <span style={{ fontWeight:800, fontSize:15, color:C.text }}>{p.name}</span>
-                      <Chip color={C.blue} bg={C.blueBg}>{p.category}</Chip>
-                      {isLow && <Chip color={C.red} bg={C.redBg}>↓ Stock</Chip>}
+            {lowStock.length>0 && (
+              <div style={{ background:C.redBg, border:`1.5px solid ${C.red}33`, borderRadius:16, padding:16, marginBottom:16 }}>
+                <p style={{ color:C.red, fontWeight:700, margin:"0 0 10px", fontSize:13 }}>⚠ Productos con bajo stock</p>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                  {lowStock.map(p=>(
+                    <div key={p.id} style={{ background:C.card, borderRadius:10, padding:"7px 12px", display:"flex", alignItems:"center", gap:8, boxShadow:C.shadow }}>
+                      <ProductAvatar product={p} size={22} />
+                      <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{p.name}</span>
+                      <Chip color={C.red} bg={C.redBg}>{p.stock}/{p.minStock}</Chip>
                     </div>
-                    <p style={{ margin:0, color:C.muted, fontSize:12 }}>🏷 {p.barcode||"Sin código"} · {p.supplier}</p>
-                    <div style={{ display:"flex", gap:12, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
-                      <span style={{ color:C.green, fontWeight:800, fontSize:15 }}>{fmt(p.price)}</span>
-                      <span style={{ color:isLow?C.red:C.muted, fontSize:13 }}>Stock: <strong style={{ color:isLow?C.red:C.text2 }}>{p.stock}</strong></span>
-                      <Chip color={Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red} bg={Number(margin)>30?C.greenBg:Number(margin)>15?C.yellowBg:C.redBg}>M: {margin}%</Chip>
-                    </div>
-                  </div>
-                  <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
-                    <button onClick={()=>{ setShowMovForm("sale"); setPreselProduct(p); }} style={btnGhost(C.green,C.greenBg,{padding:"6px 10px",fontSize:12})}>Vendedor</button>
-                    {isAdmin && <>
-                      <button onClick={()=>{ setEditProduct(p); setShowProductForm(true); }} style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>Editor</button>
-                      <button onClick={()=>deleteProduct(p.id)} style={btnGhost(C.red,C.redBg,{padding:"6px 10px",fontSize:12})}>Eliminar</button>
-                    </>}
-                  </div>
+                  ))}
                 </div>
-              );
-            })}
-          </div>
-        </div>}
-
-        {/* ── MOVEMENTS */}
-        {tab==="movements" && <div>
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
-            <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Movimientos</h2>
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={()=>setShowMovForm("sale")} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Venta</button>
-              {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`,padding:"9px 14px",fontSize:13})}>+ Compra</button>}
-            </div>
-          </div>
-          <Card style={{ marginBottom:14, padding:14 }}>
-            <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
-                <span style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>Desde:</span>
-                <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} />
-              </div>
-              <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
-                <span style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>Hasta:</span>
-                <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterTo} onChange={e=>setFilterTo(e.target.value)} />
-              </div>
-              {(filterFrom||filterTo) && <button onClick={()=>{ setFilterFrom(""); setFilterTo(""); }} style={btnSecondary({padding:"8px 12px"})}>✕ Limpiar</button>}
-            </div>
-            <div style={{ display:"flex", gap:16, marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
-              <span style={{ color:C.muted, fontSize:12 }}>Ventas: <strong style={{ color:C.green }}>{fmt(filtMovements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0))}</strong></span>
-              <span style={{ color:C.muted, fontSize:12 }}>Compras: <strong style={{ color:C.blue }}>{fmt(filtMovements.filter(m=>m.type==="purchase").reduce((s,m)=>s+m.total,0))}</strong></span>
-            </div>
-          </Card>
-          {movements.length===0 && <Card style={{ textAlign:"center", padding:28 }}><p style={{ color:C.muted }}>No hay movimientos todavía.</p></Card>}
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {filtMovements.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
-              <div key={m.id} style={{ background:C.card, borderRadius:14, padding:14, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
-                <div style={{ width:38, height:38, borderRadius:12, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>
-                  {m.type==="sale"?"📤":"📥"}
-                </div>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
-                    <span style={{ fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:130 }}>{p?.name||"Producto eliminado"}</span>
-                    <Chip color={m.type==="sale"?C.green:C.blue} bg={m.type==="sale"?C.greenBg:C.blueBg}>{m.type==="sale"?"Venta":"Compra"}</Chip>
-                    {pm && <Chip color={pm.color} bg={`${pm.color}12`}>{pm.label}</Chip>}
-                  </div>
-                  <p style={{ margin:"3px 0 0", color:C.muted, fontSize:12 }}>{fmtDate(m.date)} · {m.qty} uds · {m.note}</p>
-                </div>
-                <span style={{ fontWeight:800, color:m.type==="sale"?C.green:C.blue, fontSize:15, whiteSpace:"nowrap" }}>{fmt(m.total)}</span>
-                {isAdmin && <div style={{ display:"flex", gap:6 }}>
-                  <button onClick={()=>{ setEditMovement(m); setShowMovForm(m.type); }} style={btnGhost(C.blue,C.blueBg,{padding:"5px 8px",fontSize:12})}>✏️</button>
-                  <button onClick={()=>deleteMovement(m)} style={btnGhost(C.red,C.redBg,{padding:"5px 8px",fontSize:12})}>🗑</button>
-                </div>}
-              </div>
-            );})}
-            {filtMovements.length===0&&movements.length>0 && <Card style={{ textAlign:"center", padding:24 }}><p style={{ color:C.muted, fontSize:13 }}>Sin movimientos en el rango seleccionado.</p></Card>}
-          </div>
-        </div>}
-
-        {/* ── RENTABILITY */}
-        {tab==="rentability" && <div>
-          <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>📊 Rentabilidad</h2>
-          <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-            <StatCard label="Ingresos" value={fmt(totalSales)} color={C.green} bg={C.greenBg} icon="💰" />
-            <StatCard label="Costo ventas" value={fmt(totalCost)} color={C.yellow} bg={C.yellowBg} icon="📦" />
-            <StatCard label="Ganancia bruta" value={fmt(totalProfit)} color={C.purple} bg={C.purpleBg} icon="💵" />
-            <StatCard label="Margen prom." value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
-          </div>
-          <Card style={{ marginBottom:16, overflowX:"auto" }}>
-            <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📋 Detalle por producto</p>
-            {products.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:16 }}>Sin datos</p> :
-            <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-              <thead><tr style={{ borderBottom:`2px solid ${C.border}` }}>
-                {["Producto","Vendido","Ingresos","Ganancia","Margen","Stock"].map(h=>(
-                  <th key={h} style={{ color:C.muted, fontWeight:700, padding:"8px 8px", textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>{rentData.map((p,i)=>(
-                <tr key={p.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"transparent":C.card2 }}>
-                  <td style={{ padding:"10px 8px" }}><div style={{ display:"flex", alignItems:"center", gap:8 }}><ProductAvatar product={p} size={26} /><span style={{ color:C.text, fontWeight:600, maxWidth:90, overflow:"hidden", textOverflow:"ellipsis", display:"block", whiteSpace:"nowrap" }}>{p.name}</span></div></td>
-                  <td style={{ padding:"10px 8px", color:C.text2 }}>{p.sold}</td>
-                  <td style={{ padding:"10px 8px", color:C.blue, fontWeight:600, whiteSpace:"nowrap" }}>{fmt(p.revenue)}</td>
-                  <td style={{ padding:"10px 8px", color:p.profit>=0?C.green:C.red, fontWeight:700, whiteSpace:"nowrap" }}>{fmt(p.profit)}</td>
-                  <td style={{ padding:"10px 8px" }}><Chip color={Number(p.margin)>30?C.green:Number(p.margin)>15?C.yellow:C.red} bg={Number(p.margin)>30?C.greenBg:Number(p.margin)>15?C.yellowBg:C.redBg}>{p.margin}%</Chip></td>
-                  <td style={{ padding:"10px 8px", color:p.stock<=p.minStock?C.red:C.text2, fontWeight:p.stock<=p.minStock?700:400 }}>{p.stock}</td>
-                </tr>
-              ))}</tbody>
-            </table>}
-          </Card>
-          <Card style={{ marginBottom:16 }}>
-            <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📦 Niveles de stock</p>
-            {products.map(p=>{ const pct=Math.min(100,(p.stock/Math.max(p.stock,p.minStock*3))*100); const color=p.stock<=p.minStock?C.red:p.stock<=p.minStock*1.5?C.yellow:C.green; const bg=p.stock<=p.minStock?C.redBg:p.stock<=p.minStock*1.5?C.yellowBg:C.greenBg; return (
-              <div key={p.id} style={{ marginBottom:12 }}>
-                <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                  <span style={{ fontSize:12, display:"flex", alignItems:"center", gap:8, color:C.text2 }}><ProductAvatar product={p} size={18} />{p.name}</span>
-                  <Chip color={color} bg={bg}>{p.stock} uds</Chip>
-                </div>
-                <div style={{ background:C.border, borderRadius:8, height:8, overflow:"hidden" }}>
-                  <div style={{ width:`${pct}%`, height:"100%", background:color, borderRadius:8, transition:"width 0.6s" }} />
-                </div>
-              </div>
-            );})}
-          </Card>
-          <Card>
-            <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>💡 Sugerencias</p>
-            {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).map(p=>(
-              <div key={`slow-${p.id}`} style={{ background:C.yellowBg, border:`1px solid ${C.yellow}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
-                <ProductAvatar product={p} size={32} />
-                <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — stock parado</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Tiene {p.stock} uds y vendió solo {p.sold}. Considerá una promoción.</p></div>
-              </div>
-            ))}
-            {lowStock.map(p=>(
-              <div key={`low-${p.id}`} style={{ background:C.redBg, border:`1px solid ${C.red}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
-                <ProductAvatar product={p} size={32} />
-                <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — reponer urgente</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Solo {p.stock} uds (mín: {p.minStock}). Proveedor: {p.supplier||"N/A"}.</p></div>
-              </div>
-            ))}
-            {rentData.filter(p=>Number(p.margin)<15&&p.sold>0).map(p=>(
-              <div key={`margin-${p.id}`} style={{ background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
-                <ProductAvatar product={p} size={32} />
-                <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — margen bajo ({p.margin}%)</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Revisá el precio o negociá con el proveedor.</p></div>
-              </div>
-            ))}
-            {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).length===0&&lowStock.length===0&&rentData.filter(p=>Number(p.margin)<15&&p.sold>0).length===0 && (
-              <div style={{ background:C.greenBg, borderRadius:12, padding:16, textAlign:"center" }}>
-                <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:14 }}>✅ Todo en orden — sin sugerencias urgentes</p>
               </div>
             )}
-          </Card>
-        </div>}
+            {products.length===0 && (
+              <Card style={{ textAlign:"center", padding:32, marginBottom:16 }}>
+                <p style={{ fontSize:40, margin:"0 0 10px" }}>📦</p>
+                <p style={{ color:C.muted, fontSize:14, margin:"0 0 16px" }}>Empezá agregando tu primer producto</p>
+                {isAdmin && <button onClick={()=>{ setTab("products"); setShowProductForm(true); }} style={btnPrimary()}>+ Agregar primer producto</button>}
+              </Card>
+            )}
+            {products.length>0 && (
+              <Card style={{ marginBottom:16 }}>
+                <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>🏆 Productos destacados</p>
+                {rentData.slice(0,5).map((p,i)=>(
+                  <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom:i<4?`1px solid ${C.border}`:"none" }}>
+                    <span style={{ color:C.muted, width:18, fontSize:12, fontWeight:700 }}>#{i+1}</span>
+                    <ProductAvatar product={p} size={36} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <p style={{ margin:0, fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</p>
+                      <p style={{ margin:0, color:C.muted, fontSize:12 }}>{p.sold} vendidas · {p.margin}% margen</p>
+                    </div>
+                    <span style={{ color:C.green, fontWeight:800, fontSize:14 }}>{fmt(p.profit)}</span>
+                  </div>
+                ))}
+              </Card>
+            )}
+            <div style={{ display:"flex", gap:10 }}>
+              <button onClick={()=>setShowMovForm("sale")} style={{ ...btnPrimary(), flex:1, fontSize:14 }}>+ Nueva venta</button>
+              {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={{ ...btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`}), flex:1, fontSize:14 }}>+ Compra</button>}
+            </div>
+          </div>}
 
-        </>)} {/* end loading / businessId */}
+          {/* PRODUCTS */}
+          {tab==="products" && <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+              <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Productos</h2>
+              <div style={{ display:"flex", gap:8 }}>
+                {isAdmin && <button onClick={()=>setShowCatManager(true)} style={btnSecondary({padding:"8px 12px",fontSize:13})}>🗂 Categorías</button>}
+                {isAdmin && <button onClick={()=>{ setEditProduct(null); setShowProductForm(true); }} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Nuevo</button>}
+              </div>
+            </div>
+            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar producto..." style={{ ...inp, flex:1 }} />
+              <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"12px 14px"})}>📷</button>
+            </div>
+            <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
+              {["Todas",...categories].map(c=>(
+                <button key={c} onClick={()=>setFilterCat(c)}
+                  style={{ background:filterCat===c?C.green:C.card, border:`1.5px solid ${filterCat===c?C.green:C.border}`, color:filterCat===c?"#fff":C.text2, borderRadius:20, padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+              {products.filter(p=>{
+                const ms = p.name.toLowerCase().includes(search.toLowerCase())||p.barcode?.includes(search)||p.supplier?.toLowerCase().includes(search.toLowerCase());
+                return ms&&(filterCat==="Todas"||p.category===filterCat);
+              }).map(p=>{
+                const isLow = p.stock<=p.minStock;
+                const margin = p.price&&p.cost?(((p.price-p.cost)/p.price)*100).toFixed(0):0;
+                return (
+                  <div key={p.id} style={{ background:C.card, borderRadius:16, padding:14, border:`1.5px solid ${isLow?C.red+"55":C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
+                    <ProductAvatar product={p} size={54} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
+                        <span style={{ fontWeight:800, fontSize:15, color:C.text }}>{p.name}</span>
+                        <Chip color={C.blue} bg={C.blueBg}>{p.category}</Chip>
+                        {isLow && <Chip color={C.red} bg={C.redBg}>↓ Stock</Chip>}
+                      </div>
+                      <p style={{ margin:0, color:C.muted, fontSize:12 }}>🏷 {p.barcode||"Sin código"} · {p.supplier}</p>
+                      <div style={{ display:"flex", gap:12, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
+                        <span style={{ color:C.green, fontWeight:800, fontSize:15 }}>{fmt(p.price)}</span>
+                        <span style={{ color:isLow?C.red:C.muted, fontSize:13 }}>Stock: <strong style={{ color:isLow?C.red:C.text2 }}>{p.stock}</strong></span>
+                        <Chip color={Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red} bg={Number(margin)>30?C.greenBg:Number(margin)>15?C.yellowBg:C.redBg}>M: {margin}%</Chip>
+                      </div>
+                    </div>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                      <button onClick={()=>{ setShowMovForm("sale"); setPreselProduct(p); }} style={btnGhost(C.green,C.greenBg,{padding:"6px 10px",fontSize:12})}>Vender</button>
+                      {isAdmin && <>
+                        <button onClick={()=>{ setEditProduct(p); setShowProductForm(true); }} style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>Editar</button>
+                        <button onClick={()=>deleteProduct(p.id)} style={btnGhost(C.red,C.redBg,{padding:"6px 10px",fontSize:12})}>Eliminar</button>
+                      </>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>}
+
+          {/* MOVEMENTS */}
+          {tab==="movements" && <div>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+              <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Movimientos</h2>
+              <div style={{ display:"flex", gap:8 }}>
+                <button onClick={()=>setShowMovForm("sale")} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Venta</button>
+                {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`,padding:"9px 14px",fontSize:13})}>+ Compra</button>}
+              </div>
+            </div>
+            <Card style={{ marginBottom:14, padding:14 }}>
+              <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
+                  <span style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>Desde:</span>
+                  <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} />
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
+                  <span style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>Hasta:</span>
+                  <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterTo} onChange={e=>setFilterTo(e.target.value)} />
+                </div>
+                {(filterFrom||filterTo) && <button onClick={()=>{ setFilterFrom(""); setFilterTo(""); }} style={btnSecondary({padding:"8px 12px"})}>✕ Limpiar</button>}
+              </div>
+              <div style={{ display:"flex", gap:16, marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
+                <span style={{ color:C.muted, fontSize:12 }}>Ventas: <strong style={{ color:C.green }}>{fmt(filtMovements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0))}</strong></span>
+                <span style={{ color:C.muted, fontSize:12 }}>Compras: <strong style={{ color:C.blue }}>{fmt(filtMovements.filter(m=>m.type==="purchase").reduce((s,m)=>s+m.total,0))}</strong></span>
+              </div>
+            </Card>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {filtMovements.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
+                <div key={m.id} style={{ background:C.card, borderRadius:14, padding:14, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
+                  <div style={{ width:38, height:38, borderRadius:12, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>
+                    {m.type==="sale"?"📤":"📥"}
+                  </div>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+                      <span style={{ fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:130 }}>{p?.name||"Producto eliminado"}</span>
+                      <Chip color={m.type==="sale"?C.green:C.blue} bg={m.type==="sale"?C.greenBg:C.blueBg}>{m.type==="sale"?"Venta":"Compra"}</Chip>
+                      {pm && <Chip color={pm.color} bg={`${pm.color}12`}>{pm.label}</Chip>}
+                    </div>
+                    <p style={{ margin:"3px 0 0", color:C.muted, fontSize:12 }}>{fmtDate(m.date)} · {m.qty} uds · {m.note}</p>
+                  </div>
+                  <span style={{ fontWeight:800, color:m.type==="sale"?C.green:C.blue, fontSize:15, whiteSpace:"nowrap" }}>{fmt(m.total)}</span>
+                  {isAdmin && <div style={{ display:"flex", gap:6 }}>
+                    <button onClick={()=>{ setEditMovement(m); setShowMovForm(m.type); }} style={btnGhost(C.blue,C.blueBg,{padding:"5px 8px",fontSize:12})}>✏️</button>
+                    <button onClick={()=>deleteMovement(m)} style={btnGhost(C.red,C.redBg,{padding:"5px 8px",fontSize:12})}>🗑</button>
+                  </div>}
+                </div>
+              );})}
+              {filtMovements.length===0 && <Card style={{ textAlign:"center", padding:24 }}><p style={{ color:C.muted, fontSize:13 }}>Sin movimientos en el rango seleccionado.</p></Card>}
+            </div>
+          </div>}
+
+          {/* RENTABILITY */}
+          {tab==="rentability" && <div>
+            <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>📊 Rentabilidad</h2>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+              <StatCard label="Ingresos"      value={fmt(totalSales)}   color={C.green}  bg={C.greenBg}  icon="💰" />
+              <StatCard label="Costo ventas"  value={fmt(totalCost)}    color={C.yellow} bg={C.yellowBg} icon="📦" />
+              <StatCard label="Ganancia bruta"value={fmt(totalProfit)}  color={C.purple} bg={C.purpleBg} icon="💵" />
+              <StatCard label="Margen prom."  value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
+            </div>
+            <Card style={{ marginBottom:16, overflowX:"auto" }}>
+              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📋 Detalle por producto</p>
+              {products.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:16 }}>Sin datos</p> :
+              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                <thead><tr style={{ borderBottom:`2px solid ${C.border}` }}>
+                  {["Producto","Vendido","Ingresos","Ganancia","Margen","Stock"].map(h=>(
+                    <th key={h} style={{ color:C.muted, fontWeight:700, padding:"8px 8px", textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{rentData.map((p,i)=>(
+                  <tr key={p.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"transparent":C.card2 }}>
+                    <td style={{ padding:"10px 8px" }}><div style={{ display:"flex", alignItems:"center", gap:8 }}><ProductAvatar product={p} size={26} /><span style={{ color:C.text, fontWeight:600, maxWidth:90, overflow:"hidden", textOverflow:"ellipsis", display:"block", whiteSpace:"nowrap" }}>{p.name}</span></div></td>
+                    <td style={{ padding:"10px 8px", color:C.text2 }}>{p.sold}</td>
+                    <td style={{ padding:"10px 8px", color:C.blue, fontWeight:600, whiteSpace:"nowrap" }}>{fmt(p.revenue)}</td>
+                    <td style={{ padding:"10px 8px", color:p.profit>=0?C.green:C.red, fontWeight:700, whiteSpace:"nowrap" }}>{fmt(p.profit)}</td>
+                    <td style={{ padding:"10px 8px" }}><Chip color={Number(p.margin)>30?C.green:Number(p.margin)>15?C.yellow:C.red} bg={Number(p.margin)>30?C.greenBg:Number(p.margin)>15?C.yellowBg:C.redBg}>{p.margin}%</Chip></td>
+                    <td style={{ padding:"10px 8px", color:p.stock<=p.minStock?C.red:C.text2, fontWeight:p.stock<=p.minStock?700:400 }}>{p.stock}</td>
+                  </tr>
+                ))}</tbody>
+              </table>}
+            </Card>
+            <Card style={{ marginBottom:16 }}>
+              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📦 Niveles de stock</p>
+              {products.map(p=>{ const pct=Math.min(100,(p.stock/Math.max(p.stock,p.minStock*3))*100); const color=p.stock<=p.minStock?C.red:p.stock<=p.minStock*1.5?C.yellow:C.green; const bg=p.stock<=p.minStock?C.redBg:p.stock<=p.minStock*1.5?C.yellowBg:C.greenBg; return (
+                <div key={p.id} style={{ marginBottom:12 }}>
+                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                    <span style={{ fontSize:12, display:"flex", alignItems:"center", gap:8, color:C.text2 }}><ProductAvatar product={p} size={18} />{p.name}</span>
+                    <Chip color={color} bg={bg}>{p.stock} uds</Chip>
+                  </div>
+                  <div style={{ background:C.border, borderRadius:8, height:8, overflow:"hidden" }}>
+                    <div style={{ width:`${pct}%`, height:"100%", background:color, borderRadius:8, transition:"width 0.6s" }} />
+                  </div>
+                </div>
+              );})}
+            </Card>
+            <Card>
+              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>💡 Sugerencias</p>
+              {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).map(p=>(
+                <div key={`slow-${p.id}`} style={{ background:C.yellowBg, border:`1px solid ${C.yellow}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
+                  <ProductAvatar product={p} size={32} />
+                  <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — stock parado</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Tiene {p.stock} uds y vendió solo {p.sold}. Considerá una promoción.</p></div>
+                </div>
+              ))}
+              {lowStock.map(p=>(
+                <div key={`low-${p.id}`} style={{ background:C.redBg, border:`1px solid ${C.red}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
+                  <ProductAvatar product={p} size={32} />
+                  <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — reponer urgente</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Solo {p.stock} uds (mín: {p.minStock}). Proveedor: {p.supplier||"N/A"}.</p></div>
+                </div>
+              ))}
+              {rentData.filter(p=>Number(p.margin)<15&&p.sold>0).map(p=>(
+                <div key={`margin-${p.id}`} style={{ background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
+                  <ProductAvatar product={p} size={32} />
+                  <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — margen bajo ({p.margin}%)</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Revisá el precio o negociá con el proveedor.</p></div>
+                </div>
+              ))}
+              {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).length===0&&lowStock.length===0&&rentData.filter(p=>Number(p.margin)<15&&p.sold>0).length===0 && (
+                <div style={{ background:C.greenBg, borderRadius:12, padding:16, textAlign:"center" }}>
+                  <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:14 }}>✅ Todo en orden — sin sugerencias urgentes</p>
+                </div>
+              )}
+            </Card>
+          </div>}
+
+        </>)}
       </div>
 
       {/* BOTTOM NAV */}
@@ -1232,11 +1000,11 @@ function MainApp({ session }) {
       </div>
 
       {/* MODALS */}
-      {showScanner && <BarcodeScanner onDetect={handleBarcode} onClose={()=>setShowScanner(false)} />}
+      {showScanner    && <BarcodeScanner onDetect={handleBarcode} onClose={()=>setShowScanner(false)} />}
       {showProductForm && <ProductForm initial={editProduct} categories={categories} onSave={saveProduct} onClose={()=>{ setShowProductForm(false); setEditProduct(null); }} saving={saving} />}
-      {showMovForm && <MovementForm type={showMovForm} products={products} preselected={preselProduct} editData={editMovement} onSave={saveMovement} onClose={()=>{ setShowMovForm(null); setPreselProduct(null); setEditMovement(null); }} saving={saving} />}
-      {showCashClose && <CashClose movements={movements} products={products} onClose={()=>setShowCashClose(false)} />}
-      {showQuickCash && <QuickCash products={products} onSell={saveMovement} onClose={()=>setShowQuickCash(false)} />}
+      {showMovForm    && <MovementForm type={showMovForm} products={products} preselected={preselProduct} editData={editMovement} onSave={saveMovement} onClose={()=>{ setShowMovForm(null); setPreselProduct(null); setEditMovement(null); }} saving={saving} />}
+      {showCashClose  && <CashClose movements={movements} products={products} onClose={()=>setShowCashClose(false)} />}
+      {showQuickCash  && <QuickCash products={products} onSell={saveMovement} onClose={()=>setShowQuickCash(false)} />}
       {showCatManager && <CategoryManager businessId={businessId} categories={categories} onUpdate={setCategories} onClose={()=>setShowCatManager(false)} />}
     </div>
   );
