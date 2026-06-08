@@ -1,15 +1,10 @@
-import { useState, useEffect } from "react";
-import { login, logout, onSessionChange } from "./firebase";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { login, logout, onSessionChange, createUser, createNegocio, listNegocios, listUsers, updateNegocio, updateUserProfile, db } from "./firebase";
 import { useFirestore, fbAdd, fbUpdate, fbDelete, fbSet } from "./hooks/useFirestore";
 import { ControlProLogo, Loader, Card, Chip, Field, Modal, StatCard, ProductAvatar } from "./components/UI";
 import { C, PAY_METHODS, COL, SUPERADMIN_EMAIL, fmt, fmtDate, todayStr, inp, btnPrimary, btnSecondary, btnGhost } from "./constants";
-import {
-  collection, addDoc, getDocs, updateDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp,
-} from "firebase/firestore";
-import { db, createUser, createNegocio, listNegocios, listUsers, updateNegocio, updateUserProfile } from "./firebase";
-import { useRef, useCallback } from "react";
 
-// ─── BARCODE SCANNER ─────────────────────────────────────────────────────────
+// ─── BARCODE SCANNER ──────────────────────────────────────────────────────────
 function BarcodeScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
   const readerRef = useRef(null);
@@ -41,10 +36,8 @@ function BarcodeScanner({ onDetect, onClose }) {
         if (!videoRef.current || !active) return;
         reader.decodeFromVideoDevice(back?.deviceId, videoRef.current, (result) => {
           if (!active || !result) return;
-          const code = result.getText();
-          setStatus(`✅ ${code}`);
           active = false;
-          setTimeout(() => { onDetect(code); onClose(); }, 300);
+          setTimeout(() => { onDetect(result.getText()); onClose(); }, 300);
         });
       } catch(e) { setStatus("Cámara no disponible — usá el código manual"); }
     };
@@ -55,7 +48,7 @@ function BarcodeScanner({ onDetect, onClose }) {
     <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:999, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
       <div style={{ background:C.card, borderRadius:24, padding:24, width:"100%", maxWidth:340, boxShadow:C.shadowMd }}>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
-          <span style={{ color:C.text, fontWeight:700, fontSize:16 }}>📷 Escáner de código</span>
+          <span style={{ color:C.text, fontWeight:700, fontSize:16 }}>📷 Escáner</span>
           <button onClick={onClose} style={btnSecondary({padding:"4px 12px"})}>✕</button>
         </div>
         <div style={{ background:"#000", borderRadius:16, overflow:"hidden", position:"relative", aspectRatio:"4/3", marginBottom:14 }}>
@@ -65,11 +58,10 @@ function BarcodeScanner({ onDetect, onClose }) {
           </div>
           <div style={{ position:"absolute", bottom:0, left:0, right:0, textAlign:"center", color:"#fff", fontSize:12, background:"rgba(0,0,0,0.5)", padding:"6px 0" }}>{status}</div>
         </div>
-        <p style={{ color:C.muted, fontSize:12, textAlign:"center", marginBottom:10 }}>O ingresá el código manualmente:</p>
         <div style={{ display:"flex", gap:8 }}>
           <input value={manual} onChange={e=>setManual(e.target.value)}
             onKeyDown={e=>e.key==="Enter"&&manual.trim()&&(onDetect(manual.trim()),onClose())}
-            placeholder="Código..." style={{ ...inp, flex:1 }} />
+            placeholder="Código manual..." style={{ ...inp, flex:1 }} />
           <button onClick={()=>manual.trim()&&(onDetect(manual.trim()),onClose())} style={btnPrimary({padding:"12px 16px"})}>OK</button>
         </div>
       </div>
@@ -91,17 +83,16 @@ function ImageUpload({ value, onChange }) {
       <div style={{ display:"flex", gap:8, marginBottom:12 }}>
         {["upload","url"].map(t=>(
           <button key={t} type="button" onClick={()=>setTab(t)}
-            style={{ ...btnSecondary(), background:tab===t?C.greenBg:C.card2, borderColor:tab===t?C.green:C.border2, color:tab===t?C.green:C.muted }}>
-            {t==="upload"?"📁 Subir foto":"🌐 URL"}
+            style={{ ...btnSecondary(), background:tab===t?C.greenBg:C.card, borderColor:tab===t?C.green:C.border2, color:tab===t?C.green:C.muted }}>
+            {t==="upload"?"📁 Subir":"🌐 URL"}
           </button>
         ))}
-        {value && <button type="button" onClick={()=>onChange(null)} style={btnGhost(C.red,C.redBg)}>🗑 Quitar</button>}
+        {value && <button type="button" onClick={()=>onChange(null)} style={btnGhost(C.red,C.redBg)}>🗑</button>}
       </div>
       {tab==="upload" && (
         <div onClick={()=>fileRef.current.click()}
-          style={{ border:`2px dashed ${C.border2}`, borderRadius:14, padding:24, textAlign:"center", cursor:"pointer", background:C.card2 }}>
-          {value
-            ? <img src={value} alt="preview" style={{ maxHeight:120, maxWidth:"100%", borderRadius:10, objectFit:"contain" }} />
+          style={{ border:`2px dashed ${C.border2}`, borderRadius:14, padding:24, textAlign:"center", cursor:"pointer", background:C.card }}>
+          {value ? <img src={value} alt="preview" style={{ maxHeight:120, maxWidth:"100%", borderRadius:10, objectFit:"contain" }} />
             : <><div style={{ fontSize:36, marginBottom:8 }}>📷</div><p style={{ color:C.muted, fontSize:13, margin:0 }}>Tocá para subir una foto</p></>}
           <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display:"none" }} />
         </div>
@@ -174,8 +165,7 @@ function CategoryManager({ businessId, categories, onUpdate, onClose }) {
   const remove = (c) => { if(c==="General") return alert("No se puede eliminar General."); setList(l=>l.filter(x=>x!==c)); };
   const save = async () => { setSaving(true); await fbSet(businessId, COL.categories, "lista", {items:list}); onUpdate(list); setSaving(false); onClose(); };
   return (
-    <Modal title="🗂 Mis categorías" onClose={onClose}>
-      <p style={{ color:C.muted, fontSize:13, margin:"0 0 16px" }}>Personalizá las categorías de tu negocio.</p>
+    <Modal title="🗂 Categorías" onClose={onClose}>
       <div style={{ display:"flex", gap:8, marginBottom:16 }}>
         <input style={inp} value={newCat} onChange={e=>setNewCat(e.target.value)} onKeyDown={e=>e.key==="Enter"&&add()} placeholder="Nueva categoría..." />
         <button onClick={add} style={btnPrimary({padding:"12px 16px"})}>+ Agregar</button>
@@ -188,9 +178,7 @@ function CategoryManager({ businessId, categories, onUpdate, onClose }) {
           </div>
         ))}
       </div>
-      <button onClick={save} disabled={saving} style={{ ...btnPrimary(), width:"100%" }}>
-        {saving?"Guardando...":"Guardar categorías →"}
-      </button>
+      <button onClick={save} disabled={saving} style={{ ...btnPrimary(), width:"100%" }}>{saving?"Guardando...":"Guardar →"}</button>
     </Modal>
   );
 }
@@ -202,11 +190,11 @@ function ProductForm({ initial, categories, onSave, onClose, saving }) {
   const [showScanner, setShowScanner] = useState(false);
   const set = (k, v) => setF(p => ({...p, [k]:v}));
   const margin = f.price&&f.cost ? (((f.price-f.cost)/f.price)*100).toFixed(1) : 0;
-  const mColor = Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red;
+  const mColor = Number(margin)>30?C.green:Number(margin)>15?C.orange:C.red;
   return (
     <Modal title={initial?"✏️ Editar producto":"➕ Nuevo producto"} onClose={onClose}>
       {showScanner && <BarcodeScanner onDetect={c=>{set("barcode",c);setShowScanner(false);}} onClose={()=>setShowScanner(false)} />}
-      <Field label="Foto del producto"><ImageUpload value={f.image} onChange={v=>set("image",v)} /></Field>
+      <Field label="Foto"><ImageUpload value={f.image} onChange={v=>set("image",v)} /></Field>
       <Field label="Nombre"><input style={inp} value={f.name} onChange={e=>set("name",e.target.value)} placeholder="Nombre del producto" /></Field>
       <Field label="Descripción"><input style={inp} value={f.description} onChange={e=>set("description",e.target.value)} /></Field>
       <Field label="Categoría">
@@ -220,11 +208,7 @@ function ProductForm({ initial, categories, onSave, onClose, saving }) {
       </div>
       <div style={{ display:"flex", gap:12 }}>
         <div style={{ flex:1 }}><Field label="Costo"><input style={inp} type="number" value={f.cost} onChange={e=>set("cost",e.target.value)} /></Field></div>
-        <div style={{ flex:1 }}>
-          <Field label="Margen">
-            <div style={{ ...inp, background:`${mColor}12`, borderColor:`${mColor}44`, color:mColor, fontWeight:800, fontSize:16 }}>{margin}%</div>
-          </Field>
-        </div>
+        <div style={{ flex:1 }}><Field label="Margen"><div style={{ ...inp, background:`${mColor}12`, borderColor:`${mColor}44`, color:mColor, fontWeight:800, fontSize:16 }}>{margin}%</div></Field></div>
       </div>
       <Field label="Proveedor"><input style={inp} value={f.supplier} onChange={e=>set("supplier",e.target.value)} /></Field>
       <div style={{ display:"flex", gap:12 }}>
@@ -260,13 +244,13 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
   const total = product?Number(qty)*unitPrice:0;
   const isEdit = !!editData;
   return (
-    <Modal title={isEdit?"✏️ Editar movimiento":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
+    <Modal title={isEdit?"✏️ Editar":isSale?"📤 Nueva venta":"📥 Nueva compra"} onClose={onClose}>
       <Field label="Producto"><ProductSearchInput products={products} value={productId} onChange={setProductId} /></Field>
       {isSale && <Field label="Tipo de precio">
         <div style={{ display:"flex", gap:8 }}>
           {["retail","wholesale"].map(t=>(
             <button key={t} onClick={()=>setPriceType(t)}
-              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card2, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
+              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
               {t==="retail"?"🛍 Minorista":"🏭 Mayorista"}
             </button>
           ))}
@@ -276,14 +260,14 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
         <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
         <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
       </div>
-      {!isSale && <Field label="💲 Precio de compra (por unidad)">
+      {!isSale && <Field label="Precio de compra (por unidad)">
         <input style={inp} type="number" min="0" value={customPrice} onChange={e=>setCustomPrice(e.target.value)} placeholder={`Costo guardado: $${autoPrice||0}`} />
       </Field>}
       <Field label="Método de pago">
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
           {PAY_METHODS.map(m=>(
             <button key={m.id} onClick={()=>setPayMethod(m.id)}
-              style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?`${m.color}12`:C.card2, borderColor:payMethod===m.id?m.color:C.border2, color:payMethod===m.id?m.color:C.muted }}>
+              style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?C.greenBg:C.card, borderColor:payMethod===m.id?C.green:C.border2, color:payMethod===m.id?C.green:C.muted }}>
               {m.label}
             </button>
           ))}
@@ -304,7 +288,7 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
       <button onClick={()=>onSave({productId,qty:Number(qty),note,date,type,unitPrice:unitPrice||0,total,payMethod})}
         disabled={saving||(isSale&&!isEdit&&product&&product.stock<Number(qty))}
         style={{ ...btnPrimary(isSale?{}:{background:`linear-gradient(135deg,${C.blue},#1976d2)`}), width:"100%", opacity:(saving||(isSale&&!isEdit&&product&&product.stock<Number(qty)))?0.5:1 }}>
-        {saving?"Guardando...":isEdit?"Guardar cambios →":isSale?"Confirmar venta →":"Confirmar compra →"}
+        {saving?"Guardando...":isEdit?"Guardar →":isSale?"Confirmar venta →":"Confirmar compra →"}
       </button>
     </Modal>
   );
@@ -335,22 +319,22 @@ function QuickCash({ products, onSell, onClose }) {
     <Modal title="⚡ Caja rápida" onClose={onClose} wide>
       {showScanner && <BarcodeScanner onDetect={handleBarcode} onClose={()=>setShowScanner(false)} />}
       {step==="cart" && <>
-        <div style={{ display:"flex", gap:8, marginBottom:16 }}>
+        <div style={{ display:"flex", gap:8, marginBottom:12 }}>
           {["retail","wholesale"].map(t=>(
             <button key={t} onClick={()=>setPriceType(t)}
-              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card2, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
+              style={{ ...btnSecondary(), flex:1, background:priceType===t?C.greenBg:C.card, borderColor:priceType===t?C.green:C.border2, color:priceType===t?C.green:C.muted }}>
               {t==="retail"?"🛍 Minorista":"🏭 Mayorista"}
             </button>
           ))}
         </div>
         <div style={{ display:"flex", gap:8, marginBottom:14 }}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar producto..." style={{ ...inp, flex:1 }} />
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar..." style={{ ...inp, flex:1 }} />
           <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"12px 14px"})}>📷</button>
         </div>
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(110px,1fr))", gap:8, marginBottom:16, maxHeight:"28dvh", overflowY:"auto" }}>
           {filtered.map(p=>(
             <button key={p.id} onClick={()=>addToCart(p)} disabled={p.stock<=0}
-              style={{ background:C.card2, border:`1.5px solid ${C.border}`, borderRadius:14, padding:10, cursor:p.stock>0?"pointer":"not-allowed", opacity:p.stock<=0?0.5:1, textAlign:"left", boxShadow:C.shadow }}>
+              style={{ background:C.card, border:`1.5px solid ${C.border}`, borderRadius:14, padding:10, cursor:p.stock>0?"pointer":"not-allowed", opacity:p.stock<=0?0.5:1, textAlign:"left", boxShadow:C.shadow }}>
               <ProductAvatar product={p} size={34} />
               <p style={{ margin:"6px 0 2px", fontSize:12, fontWeight:700, color:C.text, lineHeight:1.3 }}>{p.name}</p>
               <p style={{ margin:0, color:C.green, fontWeight:800, fontSize:12 }}>{fmt(getPrice(p))}</p>
@@ -392,14 +376,14 @@ function QuickCash({ products, onSell, onClose }) {
           <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
             {PAY_METHODS.map(m=>(
               <button key={m.id} onClick={()=>setPayMethod(m.id)}
-                style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?`${m.color}12`:C.card2, borderColor:payMethod===m.id?m.color:C.border2, color:payMethod===m.id?m.color:C.muted }}>
+                style={{ ...btnSecondary(), flex:1, minWidth:80, background:payMethod===m.id?C.greenBg:C.card, borderColor:payMethod===m.id?C.green:C.border2, color:payMethod===m.id?C.green:C.muted }}>
                 {m.label}
               </button>
             ))}
           </div>
         </Field>
         {payMethod==="efectivo" && <>
-          <Field label="💵 Efectivo recibido">
+          <Field label="Efectivo recibido">
             <input style={{ ...inp, fontSize:22, fontWeight:700, textAlign:"center" }} type="number" value={cashReceived} onChange={e=>setCashReceived(e.target.value)} placeholder="0" />
           </Field>
           <div style={{ display:"flex", gap:6, marginBottom:16, flexWrap:"wrap" }}>
@@ -447,7 +431,7 @@ function CashClose({ movements, products, onClose }) {
     <Modal title="💰 Cierre de caja" onClose={onClose} wide>
       <Field label="Fecha"><input style={inp} type="date" value={selDate} onChange={e=>setSelDate(e.target.value)} /></Field>
       <div style={{ display:"flex", gap:10, flexWrap:"wrap", marginBottom:20 }}>
-        {[{l:"Ventas",v:fmt(totalSales),c:C.green,bg:C.greenBg},{l:"Compras",v:fmt(totalPurchases),c:C.blue,bg:C.blueBg},{l:"Costo",v:fmt(totalCost),c:C.yellow,bg:C.yellowBg},{l:"Ganancia",v:fmt(profit),c:profit>=0?C.green:C.red,bg:profit>=0?C.greenBg:C.redBg}].map(s=>(
+        {[{l:"Ventas",v:fmt(totalSales),c:C.green,bg:C.greenBg},{l:"Compras",v:fmt(totalPurchases),c:C.blue,bg:C.blueBg},{l:"Costo",v:fmt(totalCost),c:C.orange,bg:C.orangeBg},{l:"Ganancia",v:fmt(profit),c:profit>=0?C.green:C.red,bg:profit>=0?C.greenBg:C.redBg}].map(s=>(
           <div key={s.l} style={{ flex:1, minWidth:110, background:s.bg, borderRadius:14, padding:14, border:`1px solid ${s.c}22` }}>
             <p style={{ color:C.muted, fontSize:11, margin:"0 0 4px" }}>{s.l}</p>
             <p style={{ color:s.c, fontWeight:800, fontSize:18, margin:0 }}>{s.v}</p>
@@ -456,14 +440,13 @@ function CashClose({ movements, products, onClose }) {
       </div>
       <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
         {byMethod.map(m=>(
-          <div key={m.id} style={{ flex:1, minWidth:90, background:`${m.color}10`, border:`1.5px solid ${m.color}33`, borderRadius:12, padding:12, textAlign:"center" }}>
+          <div key={m.id} style={{ flex:1, minWidth:90, background:C.greenBg, border:`1.5px solid ${C.border2}`, borderRadius:12, padding:12, textAlign:"center" }}>
             <p style={{ color:C.muted, fontSize:11, margin:"0 0 4px" }}>{m.label}</p>
-            <p style={{ color:m.color, fontWeight:800, fontSize:15, margin:0 }}>{fmt(m.total)}</p>
+            <p style={{ color:C.green, fontWeight:800, fontSize:15, margin:0 }}>{fmt(m.total)}</p>
           </div>
         ))}
       </div>
-      {dayMovs.length===0
-        ? <p style={{ color:C.muted, textAlign:"center", padding:24 }}>Sin movimientos este día</p>
+      {dayMovs.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:24 }}>Sin movimientos este día</p>
         : dayMovs.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
           <div key={m.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 0", borderBottom:`1px solid ${C.border}` }}>
             <div style={{ width:36, height:36, borderRadius:10, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18 }}>{m.type==="sale"?"📤":"📥"}</div>
@@ -494,7 +477,7 @@ function SuperadminPanel() {
     <div>
       <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
         {["negocios","usuarios"].map(t=>(
-          <button key={t} onClick={()=>setTab(t)} style={{ ...btnSecondary(), background:tab===t?C.greenBg:C.card2, borderColor:tab===t?C.green:C.border2, color:tab===t?C.green:C.text2 }}>
+          <button key={t} onClick={()=>setTab(t)} style={{ ...btnSecondary(), background:tab===t?C.greenBg:C.card, borderColor:tab===t?C.green:C.border2, color:tab===t?C.green:C.text2 }}>
             {t==="negocios"?"🏢 Negocios":"👥 Usuarios"}
           </button>
         ))}
@@ -528,7 +511,7 @@ function SuperadminPanel() {
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
                 <div><p style={{ margin:0, fontWeight:800, fontSize:15, color:C.text }}>{u.nombre}</p><p style={{ margin:"3px 0 0", fontSize:12, color:C.muted }}>{u.email} · {neg?.nombre||u.businessId||"—"}</p></div>
                 <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-                  <Chip color={u.rol==="admin"?C.blue:C.yellow} bg={u.rol==="admin"?C.blueBg:C.yellowBg}>{u.rol}</Chip>
+                  <Chip color={u.rol==="admin"?C.blue:C.orange} bg={u.rol==="admin"?C.blueBg:C.orangeBg}>{u.rol}</Chip>
                   <Chip color={u.activo?C.green:C.red} bg={u.activo?C.greenBg:C.redBg}>{u.activo?"Activo":"Inactivo"}</Chip>
                   <button onClick={async()=>{ await updateUserProfile(u.uid,{activo:!u.activo}); load(); }} style={btnGhost(u.activo?C.red:C.green, u.activo?C.redBg:C.greenBg, {padding:"6px 10px",fontSize:12})}>{u.activo?"Desactivar":"Activar"}</button>
                 </div>
@@ -579,15 +562,15 @@ function Login() {
     setLoading(false);
   };
   return (
-    <div style={{ minHeight:"100dvh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans',sans-serif", padding:24, boxSizing:"border-box" }}>
+    <div style={{ minHeight:"100dvh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans',sans-serif", padding:24 }}>
       <div style={{ width:"100%", maxWidth:380 }}>
         <div style={{ textAlign:"center", marginBottom:36 }}>
           <div style={{ display:"flex", justifyContent:"center", marginBottom:16 }}>
-            <div style={{ width:80, height:80, background:C.greenBg, borderRadius:24, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 8px 24px ${C.greenXL}` }}>
+            <div style={{ width:80, height:80, background:C.greenBg, borderRadius:24, display:"flex", alignItems:"center", justifyContent:"center", boxShadow:`0 8px 24px ${C.greenL}44` }}>
               <ControlProLogo size={52} />
             </div>
           </div>
-          <div style={{ display:"flex", alignItems:"center", justifyContent:"center" }}>
+          <div style={{ display:"flex", alignItems:"center", justifyContent:"center", gap:0 }}>
             <span style={{ color:C.blue, fontWeight:900, fontSize:34, letterSpacing:-1 }}>Control</span>
             <span style={{ color:C.green, fontWeight:900, fontSize:34, letterSpacing:-1 }}>Pro</span>
           </div>
@@ -604,14 +587,26 @@ function Login() {
   );
 }
 
+// ─── SIDEBAR NAV ITEM ─────────────────────────────────────────────────────────
+function SidebarItem({ icon, label, active, onClick, collapsed }) {
+  return (
+    <button onClick={onClick} style={{ display:"flex", alignItems:"center", gap:10, padding:"10px 12px", borderRadius:12, cursor:"pointer", border:"none", background:active?"rgba(165,214,167,0.18)":"transparent", width:"100%", textAlign:"left", transition:"background 0.15s" }}>
+      <span style={{ fontSize:18, color:active?"#a5d6a7":"rgba(255,255,255,0.4)", flexShrink:0, width:20, textAlign:"center" }}>{icon}</span>
+      {!collapsed && <span style={{ fontSize:13, fontWeight:600, color:active?"#c8e6c9":"rgba(255,255,255,0.5)", whiteSpace:"nowrap" }}>{label}</span>}
+    </button>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 function MainApp({ session }) {
   const { user, perfil } = session;
   const businessId = perfil?.businessId || null;
   const isSuperadmin = user.email === SUPERADMIN_EMAIL;
   const isAdmin = perfil?.rol === "admin" || isSuperadmin;
+  const isMobile = window.innerWidth < 768;
 
   const [tab, setTab] = useState("dashboard");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { products, movements, categories, setCategories, loading } = useFirestore(businessId);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -694,310 +689,364 @@ function MainApp({ session }) {
   });
 
   const navItems = [
-    {id:"dashboard", icon:"◈", label:"Panel"},
-    {id:"products",  icon:"⊞", label:"Productos"},
-    {id:"movements", icon:"⇅", label:"Movimientos"},
-    {id:"rentability",icon:"◉", label:"Rent."},
-    ...(isSuperadmin?[{id:"superadmin",icon:"⚙",label:"Admin"}]:[]),
+    { id:"dashboard",   icon:"🏠", label:"Dashboard" },
+    { id:"products",    icon:"📦", label:"Productos" },
+    { id:"movements",   icon:"↕️",  label:"Movimientos" },
+    { id:"rentability", icon:"📊", label:"Rentabilidad" },
+    ...(isSuperadmin?[{id:"superadmin",icon:"⚙️",label:"Admin"}]:[]),
   ];
 
-  return (
-    <div style={{ minHeight:"100dvh", background:C.bg, fontFamily:"'DM Sans',sans-serif", color:C.text, display:"flex", flexDirection:"column", maxWidth:"100vw", overflowX:"hidden" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&display=swap');`}</style>
-
-      {/* TOP BAR */}
-      <div style={{ background:C.card, borderBottom:`1px solid ${C.border}`, padding:"12px 18px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, boxShadow:C.shadow, boxSizing:"border-box" }}>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <ControlProLogo size={32} />
-          <div style={{ display:"flex", gap:0 }}>
-            <span style={{ color:C.blue, fontWeight:900, fontSize:17, letterSpacing:-0.5 }}>Control</span>
-            <span style={{ color:C.green, fontWeight:900, fontSize:17, letterSpacing:-0.5 }}>Pro</span>
-          </div>
-          {lowStock.length>0 && <Chip color={C.red} bg={C.redBg}>⚠ {lowStock.length}</Chip>}
-          {saving && <Chip color={C.yellow} bg={C.yellowBg}>💾 Guardando</Chip>}
-        </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          {businessId && <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"8px 10px",fontSize:16})}>📷</button>}
-          {isAdmin && businessId && <button onClick={()=>setShowCashClose(true)} style={btnSecondary({padding:"8px 10px",fontSize:14})}>💰</button>}
-          <div style={{ background:C.greenBg, borderRadius:20, padding:"6px 12px", fontSize:12, fontWeight:700, color:C.green }}>
-            {perfil?.nombre?.split(" ")[0] || user.email.split("@")[0]}
-          </div>
-          <button onClick={logout} style={btnSecondary({padding:"6px 10px",fontSize:12})}>Salir</button>
-        </div>
-      </div>
-
-      {/* CONTENT */}
-      <div style={{ flex:1, padding:"16px 16px 90px", width:"100%", maxWidth:960, margin:"0 auto", boxSizing:"border-box" }}>
-
-        {tab==="superadmin" && isSuperadmin && (
-          <div>
-            <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>⚙ Panel Superadmin</h2>
-            <SuperadminPanel />
+  // ── SIDEBAR (desktop) ──
+  const Sidebar = (
+    <div style={{ width:sidebarCollapsed?56:220, background:C.sidebar, display:"flex", flexDirection:"column", transition:"width 0.25s ease", overflow:"hidden", flexShrink:0, minHeight:"100dvh" }}>
+      {/* Header */}
+      <div style={{ padding:"16px 12px 12px", display:"flex", alignItems:"center", gap:10, borderBottom:"1px solid rgba(255,255,255,0.08)", minHeight:56 }}>
+        <ControlProLogo size={32} />
+        {!sidebarCollapsed && (
+          <div style={{ display:"flex", gap:0, overflow:"hidden" }}>
+            <span style={{ color:"#90caf9", fontWeight:900, fontSize:16 }}>Control</span>
+            <span style={{ color:"#a5d6a7", fontWeight:900, fontSize:16 }}>Pro</span>
           </div>
         )}
-
-        {tab!=="superadmin" && !businessId && (
-          <Card style={{ textAlign:"center", padding:40 }}>
-            <p style={{ fontSize:32, margin:"0 0 12px" }}>🏢</p>
-            <p style={{ color:C.text, fontWeight:700, fontSize:16, margin:"0 0 8px" }}>Sin negocio asignado</p>
-            <p style={{ color:C.muted, fontSize:13 }}>Contactá al administrador para que te asigne un negocio.</p>
-          </Card>
-        )}
-
-        {tab!=="superadmin" && businessId && (loading ? <Loader text="Cargando datos desde la nube..." /> : <>
-
-          {/* DASHBOARD */}
-          {tab==="dashboard" && <div>
-            <div style={{ marginBottom:20 }}>
-              <h2 style={{ fontSize:22, fontWeight:900, margin:"0 0 2px", color:C.text }}>Hola, {perfil?.nombre?.split(" ")[0] || "Admin"} 👋</h2>
-              <p style={{ color:C.muted, margin:0, fontSize:13 }}>{new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})}</p>
-            </div>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-              <StatCard label="Ventas hoy"   value={fmt(todaySales)}    color={C.green}  bg={C.greenBg}  icon="💰" />
-              <StatCard label="Total ventas" value={fmt(totalSales)}    color={C.blue}   bg={C.blueBg}   icon="📈" />
-              <StatCard label="Ganancia"     value={fmt(totalProfit)}   color={C.purple} bg={C.purpleBg} icon="💵" />
-              <StatCard label="Inventario"   value={fmt(inventoryValue)}color={C.yellow} bg={C.yellowBg} icon="🏪" />
-            </div>
-            {lowStock.length>0 && (
-              <div style={{ background:C.redBg, border:`1.5px solid ${C.red}33`, borderRadius:16, padding:16, marginBottom:16 }}>
-                <p style={{ color:C.red, fontWeight:700, margin:"0 0 10px", fontSize:13 }}>⚠ Productos con bajo stock</p>
-                <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
-                  {lowStock.map(p=>(
-                    <div key={p.id} style={{ background:C.card, borderRadius:10, padding:"7px 12px", display:"flex", alignItems:"center", gap:8, boxShadow:C.shadow }}>
-                      <ProductAvatar product={p} size={22} />
-                      <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{p.name}</span>
-                      <Chip color={C.red} bg={C.redBg}>{p.stock}/{p.minStock}</Chip>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {products.length===0 && (
-              <Card style={{ textAlign:"center", padding:32, marginBottom:16 }}>
-                <p style={{ fontSize:40, margin:"0 0 10px" }}>📦</p>
-                <p style={{ color:C.muted, fontSize:14, margin:"0 0 16px" }}>Empezá agregando tu primer producto</p>
-                {isAdmin && <button onClick={()=>{ setTab("products"); setShowProductForm(true); }} style={btnPrimary()}>+ Agregar primer producto</button>}
-              </Card>
-            )}
-            {products.length>0 && (
-              <Card style={{ marginBottom:16 }}>
-                <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>🏆 Productos destacados</p>
-                {rentData.slice(0,5).map((p,i)=>(
-                  <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom:i<4?`1px solid ${C.border}`:"none" }}>
-                    <span style={{ color:C.muted, width:18, fontSize:12, fontWeight:700 }}>#{i+1}</span>
-                    <ProductAvatar product={p} size={36} />
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <p style={{ margin:0, fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</p>
-                      <p style={{ margin:0, color:C.muted, fontSize:12 }}>{p.sold} vendidas · {p.margin}% margen</p>
-                    </div>
-                    <span style={{ color:C.green, fontWeight:800, fontSize:14 }}>{fmt(p.profit)}</span>
-                  </div>
-                ))}
-              </Card>
-            )}
-            <div style={{ display:"flex", gap:10 }}>
-              <button onClick={()=>setShowMovForm("sale")} style={{ ...btnPrimary(), flex:1, fontSize:14 }}>+ Nueva venta</button>
-              {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={{ ...btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`}), flex:1, fontSize:14 }}>+ Compra</button>}
-            </div>
-          </div>}
-
-          {/* PRODUCTS */}
-          {tab==="products" && <div>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-              <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Productos</h2>
-              <div style={{ display:"flex", gap:8 }}>
-                {isAdmin && <button onClick={()=>setShowCatManager(true)} style={btnSecondary({padding:"8px 12px",fontSize:13})}>🗂 Categorías</button>}
-                {isAdmin && <button onClick={()=>{ setEditProduct(null); setShowProductForm(true); }} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Nuevo</button>}
-              </div>
-            </div>
-            <div style={{ display:"flex", gap:8, marginBottom:12 }}>
-              <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar producto..." style={{ ...inp, flex:1 }} />
-              <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"12px 14px"})}>📷</button>
-            </div>
-            <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
-              {["Todas",...categories].map(c=>(
-                <button key={c} onClick={()=>setFilterCat(c)}
-                  style={{ background:filterCat===c?C.green:C.card, border:`1.5px solid ${filterCat===c?C.green:C.border}`, color:filterCat===c?"#fff":C.text2, borderRadius:20, padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
-                  {c}
-                </button>
-              ))}
-            </div>
-            <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              {products.filter(p=>{
-                const ms = p.name.toLowerCase().includes(search.toLowerCase())||p.barcode?.includes(search)||p.supplier?.toLowerCase().includes(search.toLowerCase());
-                return ms&&(filterCat==="Todas"||p.category===filterCat);
-              }).map(p=>{
-                const isLow = p.stock<=p.minStock;
-                const margin = p.price&&p.cost?(((p.price-p.cost)/p.price)*100).toFixed(0):0;
-                return (
-                  <div key={p.id} style={{ background:C.card, borderRadius:16, padding:14, border:`1.5px solid ${isLow?C.red+"55":C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
-                    <ProductAvatar product={p} size={54} />
-                    <div style={{ flex:1, minWidth:0 }}>
-                      <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
-                        <span style={{ fontWeight:800, fontSize:15, color:C.text }}>{p.name}</span>
-                        <Chip color={C.blue} bg={C.blueBg}>{p.category}</Chip>
-                        {isLow && <Chip color={C.red} bg={C.redBg}>↓ Stock</Chip>}
-                      </div>
-                      <p style={{ margin:0, color:C.muted, fontSize:12 }}>🏷 {p.barcode||"Sin código"} · {p.supplier}</p>
-                      <div style={{ display:"flex", gap:12, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
-                        <span style={{ color:C.green, fontWeight:800, fontSize:15 }}>{fmt(p.price)}</span>
-                        <span style={{ color:isLow?C.red:C.muted, fontSize:13 }}>Stock: <strong style={{ color:isLow?C.red:C.text2 }}>{p.stock}</strong></span>
-                        <Chip color={Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red} bg={Number(margin)>30?C.greenBg:Number(margin)>15?C.yellowBg:C.redBg}>M: {margin}%</Chip>
-                      </div>
-                    </div>
-                    <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
-                      <button onClick={()=>{ setShowMovForm("sale"); setPreselProduct(p); }} style={btnGhost(C.green,C.greenBg,{padding:"6px 10px",fontSize:12})}>Vender</button>
-                      {isAdmin && <>
-                        <button onClick={()=>{ setEditProduct(p); setShowProductForm(true); }} style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>Editar</button>
-                        <button onClick={()=>deleteProduct(p.id)} style={btnGhost(C.red,C.redBg,{padding:"6px 10px",fontSize:12})}>Eliminar</button>
-                      </>}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>}
-
-          {/* MOVEMENTS */}
-          {tab==="movements" && <div>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
-              <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Movimientos</h2>
-              <div style={{ display:"flex", gap:8 }}>
-                <button onClick={()=>setShowMovForm("sale")} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Venta</button>
-                {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`,padding:"9px 14px",fontSize:13})}>+ Compra</button>}
-              </div>
-            </div>
-            <Card style={{ marginBottom:14, padding:14 }}>
-              <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
-                  <span style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>Desde:</span>
-                  <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} />
-                </div>
-                <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
-                  <span style={{ color:C.muted, fontSize:12, whiteSpace:"nowrap" }}>Hasta:</span>
-                  <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterTo} onChange={e=>setFilterTo(e.target.value)} />
-                </div>
-                {(filterFrom||filterTo) && <button onClick={()=>{ setFilterFrom(""); setFilterTo(""); }} style={btnSecondary({padding:"8px 12px"})}>✕ Limpiar</button>}
-              </div>
-              <div style={{ display:"flex", gap:16, marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
-                <span style={{ color:C.muted, fontSize:12 }}>Ventas: <strong style={{ color:C.green }}>{fmt(filtMovements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0))}</strong></span>
-                <span style={{ color:C.muted, fontSize:12 }}>Compras: <strong style={{ color:C.blue }}>{fmt(filtMovements.filter(m=>m.type==="purchase").reduce((s,m)=>s+m.total,0))}</strong></span>
-              </div>
-            </Card>
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-              {filtMovements.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
-                <div key={m.id} style={{ background:C.card, borderRadius:14, padding:14, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
-                  <div style={{ width:38, height:38, borderRadius:12, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>
-                    {m.type==="sale"?"📤":"📥"}
-                  </div>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
-                      <span style={{ fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:130 }}>{p?.name||"Producto eliminado"}</span>
-                      <Chip color={m.type==="sale"?C.green:C.blue} bg={m.type==="sale"?C.greenBg:C.blueBg}>{m.type==="sale"?"Venta":"Compra"}</Chip>
-                      {pm && <Chip color={pm.color} bg={`${pm.color}12`}>{pm.label}</Chip>}
-                    </div>
-                    <p style={{ margin:"3px 0 0", color:C.muted, fontSize:12 }}>{fmtDate(m.date)} · {m.qty} uds · {m.note}</p>
-                  </div>
-                  <span style={{ fontWeight:800, color:m.type==="sale"?C.green:C.blue, fontSize:15, whiteSpace:"nowrap" }}>{fmt(m.total)}</span>
-                  {isAdmin && <div style={{ display:"flex", gap:6 }}>
-                    <button onClick={()=>{ setEditMovement(m); setShowMovForm(m.type); }} style={btnGhost(C.blue,C.blueBg,{padding:"5px 8px",fontSize:12})}>✏️</button>
-                    <button onClick={()=>deleteMovement(m)} style={btnGhost(C.red,C.redBg,{padding:"5px 8px",fontSize:12})}>🗑</button>
-                  </div>}
-                </div>
-              );})}
-              {filtMovements.length===0 && <Card style={{ textAlign:"center", padding:24 }}><p style={{ color:C.muted, fontSize:13 }}>Sin movimientos en el rango seleccionado.</p></Card>}
-            </div>
-          </div>}
-
-          {/* RENTABILITY */}
-          {tab==="rentability" && <div>
-            <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>📊 Rentabilidad</h2>
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
-              <StatCard label="Ingresos"      value={fmt(totalSales)}   color={C.green}  bg={C.greenBg}  icon="💰" />
-              <StatCard label="Costo ventas"  value={fmt(totalCost)}    color={C.yellow} bg={C.yellowBg} icon="📦" />
-              <StatCard label="Ganancia bruta"value={fmt(totalProfit)}  color={C.purple} bg={C.purpleBg} icon="💵" />
-              <StatCard label="Margen prom."  value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
-            </div>
-            <Card style={{ marginBottom:16, overflowX:"auto" }}>
-              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📋 Detalle por producto</p>
-              {products.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:16 }}>Sin datos</p> :
-              <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
-                <thead><tr style={{ borderBottom:`2px solid ${C.border}` }}>
-                  {["Producto","Vendido","Ingresos","Ganancia","Margen","Stock"].map(h=>(
-                    <th key={h} style={{ color:C.muted, fontWeight:700, padding:"8px 8px", textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>{rentData.map((p,i)=>(
-                  <tr key={p.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"transparent":C.card2 }}>
-                    <td style={{ padding:"10px 8px" }}><div style={{ display:"flex", alignItems:"center", gap:8 }}><ProductAvatar product={p} size={26} /><span style={{ color:C.text, fontWeight:600, maxWidth:90, overflow:"hidden", textOverflow:"ellipsis", display:"block", whiteSpace:"nowrap" }}>{p.name}</span></div></td>
-                    <td style={{ padding:"10px 8px", color:C.text2 }}>{p.sold}</td>
-                    <td style={{ padding:"10px 8px", color:C.blue, fontWeight:600, whiteSpace:"nowrap" }}>{fmt(p.revenue)}</td>
-                    <td style={{ padding:"10px 8px", color:p.profit>=0?C.green:C.red, fontWeight:700, whiteSpace:"nowrap" }}>{fmt(p.profit)}</td>
-                    <td style={{ padding:"10px 8px" }}><Chip color={Number(p.margin)>30?C.green:Number(p.margin)>15?C.yellow:C.red} bg={Number(p.margin)>30?C.greenBg:Number(p.margin)>15?C.yellowBg:C.redBg}>{p.margin}%</Chip></td>
-                    <td style={{ padding:"10px 8px", color:p.stock<=p.minStock?C.red:C.text2, fontWeight:p.stock<=p.minStock?700:400 }}>{p.stock}</td>
-                  </tr>
-                ))}</tbody>
-              </table>}
-            </Card>
-            <Card style={{ marginBottom:16 }}>
-              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📦 Niveles de stock</p>
-              {products.map(p=>{ const pct=Math.min(100,(p.stock/Math.max(p.stock,p.minStock*3))*100); const color=p.stock<=p.minStock?C.red:p.stock<=p.minStock*1.5?C.yellow:C.green; const bg=p.stock<=p.minStock?C.redBg:p.stock<=p.minStock*1.5?C.yellowBg:C.greenBg; return (
-                <div key={p.id} style={{ marginBottom:12 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
-                    <span style={{ fontSize:12, display:"flex", alignItems:"center", gap:8, color:C.text2 }}><ProductAvatar product={p} size={18} />{p.name}</span>
-                    <Chip color={color} bg={bg}>{p.stock} uds</Chip>
-                  </div>
-                  <div style={{ background:C.border, borderRadius:8, height:8, overflow:"hidden" }}>
-                    <div style={{ width:`${pct}%`, height:"100%", background:color, borderRadius:8, transition:"width 0.6s" }} />
-                  </div>
-                </div>
-              );})}
-            </Card>
-            <Card>
-              <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>💡 Sugerencias</p>
-              {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).map(p=>(
-                <div key={`slow-${p.id}`} style={{ background:C.yellowBg, border:`1px solid ${C.yellow}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
-                  <ProductAvatar product={p} size={32} />
-                  <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — stock parado</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Tiene {p.stock} uds y vendió solo {p.sold}. Considerá una promoción.</p></div>
-                </div>
-              ))}
-              {lowStock.map(p=>(
-                <div key={`low-${p.id}`} style={{ background:C.redBg, border:`1px solid ${C.red}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
-                  <ProductAvatar product={p} size={32} />
-                  <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — reponer urgente</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Solo {p.stock} uds (mín: {p.minStock}). Proveedor: {p.supplier||"N/A"}.</p></div>
-                </div>
-              ))}
-              {rentData.filter(p=>Number(p.margin)<15&&p.sold>0).map(p=>(
-                <div key={`margin-${p.id}`} style={{ background:C.purpleBg, border:`1px solid ${C.purple}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
-                  <ProductAvatar product={p} size={32} />
-                  <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — margen bajo ({p.margin}%)</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Revisá el precio o negociá con el proveedor.</p></div>
-                </div>
-              ))}
-              {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).length===0&&lowStock.length===0&&rentData.filter(p=>Number(p.margin)<15&&p.sold>0).length===0 && (
-                <div style={{ background:C.greenBg, borderRadius:12, padding:16, textAlign:"center" }}>
-                  <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:14 }}>✅ Todo en orden — sin sugerencias urgentes</p>
-                </div>
-              )}
-            </Card>
-          </div>}
-
-        </>)}
-      </div>
-
-      {/* BOTTOM NAV */}
-      <div style={{ position:"fixed", bottom:0, left:0, right:0, background:C.card, borderTop:`1px solid ${C.border}`, display:"flex", justifyContent:"space-around", alignItems:"center", padding:"8px 8px", paddingBottom:"max(12px,env(safe-area-inset-bottom))", zIndex:40, boxSizing:"border-box", boxShadow:`0 -4px 20px rgba(46,125,50,0.08)` }}>
-        {navItems.map(n=>(
-          <button key={n.id} onClick={()=>setTab(n.id)} style={{ background:"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, padding:"4px 10px", minWidth:50 }}>
-            <span style={{ fontSize:18, color:tab===n.id?C.green:C.muted }}>{n.icon}</span>
-            <span style={{ fontSize:10, fontWeight:700, color:tab===n.id?C.green:C.muted }}>{n.label}</span>
-            {tab===n.id && <div style={{ width:20, height:3, background:C.green, borderRadius:3 }} />}
-          </button>
-        ))}
-        <button onClick={()=>setShowQuickCash(true)} style={{ ...btnPrimary(), display:"flex", flexDirection:"column", alignItems:"center", gap:2, padding:"10px 16px", borderRadius:18, transform:"translateY(-6px)", boxShadow:`0 6px 20px ${C.greenXL}` }}>
-          <span style={{ fontSize:22 }}>⚡</span>
-          <span style={{ fontSize:10, fontWeight:900 }}>CAJA</span>
+        <button onClick={()=>setSidebarCollapsed(!sidebarCollapsed)}
+          style={{ marginLeft:"auto", background:"none", border:"none", cursor:"pointer", color:"rgba(255,255,255,0.4)", padding:4, borderRadius:6, flexShrink:0, fontSize:16 }}>
+          {sidebarCollapsed?"›":"‹"}
         </button>
       </div>
+
+      {/* Nav */}
+      <div style={{ flex:1, padding:"12px 8px", display:"flex", flexDirection:"column", gap:2 }}>
+        {!sidebarCollapsed && <div style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.25)", textTransform:"uppercase", letterSpacing:0.8, padding:"8px 8px 4px" }}>Principal</div>}
+        {navItems.map(n=>(
+          <SidebarItem key={n.id} icon={n.icon} label={n.label} active={tab===n.id} onClick={()=>setTab(n.id)} collapsed={sidebarCollapsed} />
+        ))}
+        {!sidebarCollapsed && <div style={{ fontSize:10, fontWeight:700, color:"rgba(255,255,255,0.25)", textTransform:"uppercase", letterSpacing:0.8, padding:"16px 8px 4px" }}>Acciones</div>}
+        <SidebarItem icon="⚡" label="Caja rápida" active={false} onClick={()=>setShowQuickCash(true)} collapsed={sidebarCollapsed} />
+        <SidebarItem icon="💰" label="Cierre de caja" active={false} onClick={()=>setShowCashClose(true)} collapsed={sidebarCollapsed} />
+        {isAdmin && <SidebarItem icon="📷" label="Escanear" active={false} onClick={()=>setShowScanner(true)} collapsed={sidebarCollapsed} />}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding:"12px 8px", borderTop:"1px solid rgba(255,255,255,0.08)", display:"flex", alignItems:"center", gap:10 }}>
+        <div style={{ width:32, height:32, borderRadius:"50%", background:C.green, display:"flex", alignItems:"center", justifyContent:"center", fontSize:13, fontWeight:800, color:"#fff", flexShrink:0 }}>
+          {(perfil?.nombre||user.email)[0].toUpperCase()}
+        </div>
+        {!sidebarCollapsed && (
+          <div style={{ overflow:"hidden", flex:1 }}>
+            <div style={{ fontSize:12, fontWeight:700, color:"#c8e6c9", whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{perfil?.nombre||user.email}</div>
+            <div style={{ fontSize:10, color:"rgba(255,255,255,0.3)" }}>{perfil?.rol||"usuario"}</div>
+          </div>
+        )}
+        {!sidebarCollapsed && <button onClick={logout} style={{ background:"none", border:"none", color:"rgba(255,255,255,0.3)", cursor:"pointer", fontSize:12, whiteSpace:"nowrap" }}>Salir</button>}
+      </div>
+    </div>
+  );
+
+  // ── BOTTOM NAV (mobile) ──
+  const BottomNav = (
+    <div style={{ position:"fixed", bottom:0, left:0, right:0, background:C.sidebar, display:"flex", alignItems:"center", justifyContent:"space-around", padding:"10px 8px 16px", zIndex:40, boxSizing:"border-box" }}>
+      {navItems.filter(n=>n.id!=="superadmin").map(n=>(
+        <button key={n.id} onClick={()=>setTab(n.id)} style={{ background:tab===n.id?"rgba(255,255,255,0.12)":"none", border:"none", cursor:"pointer", display:"flex", flexDirection:"column", alignItems:"center", gap:3, padding:"6px 10px", borderRadius:12 }}>
+          <span style={{ fontSize:18 }}>{n.icon}</span>
+          <span style={{ fontSize:10, fontWeight:700, color:tab===n.id?"#fff":"rgba(255,255,255,0.35)" }}>{n.label}</span>
+        </button>
+      ))}
+      <button onClick={()=>setShowQuickCash(true)} style={{ ...btnPrimary(), display:"flex", flexDirection:"column", alignItems:"center", gap:2, padding:"10px 16px", borderRadius:18, transform:"translateY(-8px)", boxShadow:`0 6px 20px rgba(46,125,50,0.5)` }}>
+        <span style={{ fontSize:22 }}>⚡</span>
+        <span style={{ fontSize:10, fontWeight:900 }}>CAJA</span>
+      </button>
+    </div>
+  );
+
+  const contentPad = isMobile ? "16px 16px 90px" : "24px";
+
+  return (
+    <div style={{ minHeight:"100dvh", background:C.bg, fontFamily:"'DM Sans',sans-serif", color:C.text, display:"flex", maxWidth:"100vw", overflowX:"hidden" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&display=swap'); * { box-sizing: border-box; }`}</style>
+
+      {/* SIDEBAR — solo desktop */}
+      {!isMobile && Sidebar}
+
+      {/* MAIN */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", minHeight:"100dvh", overflow:"hidden" }}>
+
+        {/* TOP BAR */}
+        <div style={{ background:C.card, borderBottom:`1px solid ${C.border}`, padding:"12px 20px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, boxShadow:C.shadow }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            {isMobile && <ControlProLogo size={28} />}
+            {isMobile && <div><span style={{ color:C.blue, fontWeight:900, fontSize:16 }}>Control</span><span style={{ color:C.green, fontWeight:900, fontSize:16 }}>Pro</span></div>}
+            {!isMobile && <span style={{ fontSize:18, fontWeight:800, color:C.text }}>{navItems.find(n=>n.id===tab)?.label||"Dashboard"}</span>}
+            {lowStock.length>0 && <Chip color={C.red} bg={C.redBg}>⚠ {lowStock.length}</Chip>}
+            {saving && <Chip color={C.orange} bg={C.orangeBg}>💾 Guardando</Chip>}
+          </div>
+          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+            {!isMobile && isAdmin && businessId && <button onClick={()=>setShowMovForm("sale")} style={btnPrimary({padding:"8px 16px",fontSize:13})}>+ Venta</button>}
+            {!isMobile && isAdmin && businessId && <button onClick={()=>setShowMovForm("purchase")} style={{ ...btnPrimary({background:C.blue,padding:"8px 16px",fontSize:13}) }}>+ Compra</button>}
+            {isMobile && <button onClick={logout} style={btnSecondary({padding:"6px 10px",fontSize:12})}>Salir</button>}
+          </div>
+        </div>
+
+        {/* CONTENT */}
+        <div style={{ flex:1, padding:contentPad, overflowY:"auto" }}>
+
+          {tab==="superadmin" && isSuperadmin && (
+            <div>
+              <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>⚙️ Panel Superadmin</h2>
+              <SuperadminPanel />
+            </div>
+          )}
+
+          {tab!=="superadmin" && !businessId && (
+            <Card style={{ textAlign:"center", padding:40 }}>
+              <p style={{ fontSize:32, margin:"0 0 12px" }}>🏢</p>
+              <p style={{ color:C.text, fontWeight:700, fontSize:16, margin:"0 0 8px" }}>Sin negocio asignado</p>
+              <p style={{ color:C.muted, fontSize:13 }}>Contactá al administrador.</p>
+            </Card>
+          )}
+
+          {tab!=="superadmin" && businessId && (loading ? <Loader text="Cargando datos..." /> : <>
+
+            {/* DASHBOARD */}
+            {tab==="dashboard" && <div>
+              <div style={{ marginBottom:20 }}>
+                <h2 style={{ fontSize:22, fontWeight:900, margin:"0 0 2px", color:C.text }}>Hola, {perfil?.nombre?.split(" ")[0]||"Admin"} 👋</h2>
+                <p style={{ color:C.muted, margin:0, fontSize:13 }}>{new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})}</p>
+              </div>
+
+              {/* Hero number */}
+              <div style={{ background:C.card, borderRadius:20, padding:24, marginBottom:16, border:`1px solid ${C.border}`, textAlign:"center", boxShadow:C.shadow }}>
+                <p style={{ color:C.muted, fontSize:12, margin:"0 0 4px", textTransform:"uppercase", letterSpacing:0.8 }}>Ventas hoy</p>
+                <p style={{ color:C.green, fontWeight:900, fontSize:48, margin:0, lineHeight:1 }}>{fmt(todaySales)}</p>
+              </div>
+
+              {/* Quick actions */}
+              <div style={{ display:"flex", gap:10, marginBottom:16 }}>
+                {[
+                  { icon:"📤", label:"Nueva venta", color:C.green, bg:C.greenBg, action:()=>setShowMovForm("sale") },
+                  { icon:"📥", label:"Nueva compra", color:C.blue, bg:C.blueBg, action:()=>isAdmin&&setShowMovForm("purchase") },
+                  { icon:"📷", label:"Escanear", color:C.text2, bg:C.card, action:()=>setShowScanner(true) },
+                  { icon:"💰", label:"Cierre", color:C.orange, bg:C.orangeBg, action:()=>setShowCashClose(true) },
+                ].map(a=>(
+                  <button key={a.label} onClick={a.action} style={{ flex:1, background:a.bg, border:`1px solid ${C.border}`, borderRadius:16, padding:"12px 8px", display:"flex", flexDirection:"column", alignItems:"center", gap:6, cursor:"pointer", boxShadow:C.shadow }}>
+                    <div style={{ width:40, height:40, borderRadius:12, background:C.card, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, boxShadow:C.shadow }}>{a.icon}</div>
+                    <span style={{ fontSize:11, fontWeight:600, color:a.color }}>{a.label}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Stats grid */}
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+                <StatCard label="Total ventas" value={fmt(totalSales)} color={C.blue} bg={C.blueBg} icon="📈" />
+                <StatCard label="Ganancia" value={fmt(totalProfit)} color={totalProfit>=0?C.green:C.red} bg={totalProfit>=0?C.greenBg:C.redBg} icon="💵" />
+                <StatCard label="Inventario" value={fmt(inventoryValue)} color={C.orange} bg={C.orangeBg} icon="🏪" />
+                <StatCard label="Productos" value={products.length} color={C.text2} bg={C.card} icon="📦" />
+              </div>
+
+              {lowStock.length>0 && (
+                <div style={{ background:C.redBg, border:`1.5px solid ${C.red}33`, borderRadius:16, padding:16, marginBottom:16 }}>
+                  <p style={{ color:C.red, fontWeight:700, margin:"0 0 10px", fontSize:13 }}>⚠ Productos con stock bajo</p>
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:8 }}>
+                    {lowStock.map(p=>(
+                      <div key={p.id} style={{ background:C.card, borderRadius:10, padding:"7px 12px", display:"flex", alignItems:"center", gap:8, boxShadow:C.shadow }}>
+                        <ProductAvatar product={p} size={22} />
+                        <span style={{ fontSize:12, fontWeight:600, color:C.text }}>{p.name}</span>
+                        <Chip color={C.red} bg={C.redBg}>{p.stock}/{p.minStock}</Chip>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {products.length>0 && (
+                <Card>
+                  <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>🏆 Productos destacados</p>
+                  {rentData.slice(0,5).map((p,i)=>(
+                    <div key={p.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 0", borderBottom:i<4?`1px solid ${C.border}`:"none" }}>
+                      <span style={{ color:C.muted, width:18, fontSize:12, fontWeight:700 }}>#{i+1}</span>
+                      <ProductAvatar product={p} size={36} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <p style={{ margin:0, fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</p>
+                        <p style={{ margin:0, color:C.muted, fontSize:12 }}>{p.sold} vendidas · {p.margin}% margen</p>
+                      </div>
+                      <span style={{ color:C.green, fontWeight:800, fontSize:14 }}>{fmt(p.profit)}</span>
+                    </div>
+                  ))}
+                </Card>
+              )}
+            </div>}
+
+            {/* PRODUCTS */}
+            {tab==="products" && <div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
+                <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Productos</h2>
+                <div style={{ display:"flex", gap:8 }}>
+                  {isAdmin && <button onClick={()=>setShowCatManager(true)} style={btnSecondary({padding:"8px 12px",fontSize:13})}>🗂 Categorías</button>}
+                  {isAdmin && <button onClick={()=>{ setEditProduct(null); setShowProductForm(true); }} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Nuevo</button>}
+                </div>
+              </div>
+              <div style={{ display:"flex", gap:8, marginBottom:12 }}>
+                <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar producto..." style={{ ...inp, flex:1 }} />
+                <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"12px 14px"})}>📷</button>
+              </div>
+              <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
+                {["Todas",...categories].map(c=>(
+                  <button key={c} onClick={()=>setFilterCat(c)}
+                    style={{ background:filterCat===c?C.green:C.card, border:`1.5px solid ${filterCat===c?C.green:C.border}`, color:filterCat===c?"#fff":C.text2, borderRadius:20, padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
+                    {c}
+                  </button>
+                ))}
+              </div>
+              <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                {products.filter(p=>{
+                  const ms = p.name.toLowerCase().includes(search.toLowerCase())||p.barcode?.includes(search)||p.supplier?.toLowerCase().includes(search.toLowerCase());
+                  return ms&&(filterCat==="Todas"||p.category===filterCat);
+                }).map(p=>{
+                  const isLow = p.stock<=p.minStock;
+                  const margin = p.price&&p.cost?(((p.price-p.cost)/p.price)*100).toFixed(0):0;
+                  return (
+                    <div key={p.id} style={{ background:C.card, borderRadius:16, padding:14, border:`1.5px solid ${isLow?C.red+"55":C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
+                      <ProductAvatar product={p} size={54} />
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:4, flexWrap:"wrap" }}>
+                          <span style={{ fontWeight:800, fontSize:15, color:C.text }}>{p.name}</span>
+                          <Chip color={C.blue} bg={C.blueBg}>{p.category}</Chip>
+                          {isLow && <Chip color={C.red} bg={C.redBg}>↓ Stock</Chip>}
+                        </div>
+                        <p style={{ margin:0, color:C.muted, fontSize:12 }}>🏷 {p.barcode||"Sin código"} · {p.supplier}</p>
+                        <div style={{ display:"flex", gap:12, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
+                          <span style={{ color:C.green, fontWeight:800, fontSize:15 }}>{fmt(p.price)}</span>
+                          <span style={{ color:isLow?C.red:C.muted, fontSize:13 }}>Stock: <strong style={{ color:isLow?C.red:C.text2 }}>{p.stock}</strong></span>
+                          <Chip color={Number(margin)>30?C.green:Number(margin)>15?C.orange:C.red} bg={Number(margin)>30?C.greenBg:Number(margin)>15?C.orangeBg:C.redBg}>M: {margin}%</Chip>
+                        </div>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
+                        <button onClick={()=>{ setShowMovForm("sale"); setPreselProduct(p); }} style={btnGhost(C.green,C.greenBg,{padding:"6px 10px",fontSize:12})}>Vender</button>
+                        {isAdmin && <>
+                          <button onClick={()=>{ setEditProduct(p); setShowProductForm(true); }} style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>Editar</button>
+                          <button onClick={()=>deleteProduct(p.id)} style={btnGhost(C.red,C.redBg,{padding:"6px 10px",fontSize:12})}>Eliminar</button>
+                        </>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>}
+
+            {/* MOVEMENTS */}
+            {tab==="movements" && <div>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16, flexWrap:"wrap", gap:8 }}>
+                <h2 style={{ fontSize:20, fontWeight:900, margin:0, color:C.text }}>Movimientos</h2>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button onClick={()=>setShowMovForm("sale")} style={btnPrimary({padding:"9px 14px",fontSize:13})}>+ Venta</button>
+                  {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={{ ...btnPrimary({background:C.blue,padding:"9px 14px",fontSize:13}) }}>+ Compra</button>}
+                </div>
+              </div>
+              <Card style={{ marginBottom:14, padding:14 }}>
+                <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
+                    <span style={{ color:C.muted, fontSize:12 }}>Desde:</span>
+                    <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterFrom} onChange={e=>setFilterFrom(e.target.value)} />
+                  </div>
+                  <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
+                    <span style={{ color:C.muted, fontSize:12 }}>Hasta:</span>
+                    <input style={{ ...inp, flex:1, padding:"8px 12px" }} type="date" value={filterTo} onChange={e=>setFilterTo(e.target.value)} />
+                  </div>
+                  {(filterFrom||filterTo) && <button onClick={()=>{ setFilterFrom(""); setFilterTo(""); }} style={btnSecondary({padding:"8px 12px"})}>✕ Limpiar</button>}
+                </div>
+                <div style={{ display:"flex", gap:16, marginTop:10, paddingTop:10, borderTop:`1px solid ${C.border}` }}>
+                  <span style={{ color:C.muted, fontSize:12 }}>Ventas: <strong style={{ color:C.green }}>{fmt(filtMovements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0))}</strong></span>
+                  <span style={{ color:C.muted, fontSize:12 }}>Compras: <strong style={{ color:C.blue }}>{fmt(filtMovements.filter(m=>m.type==="purchase").reduce((s,m)=>s+m.total,0))}</strong></span>
+                </div>
+              </Card>
+              <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+                {filtMovements.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
+                  <div key={m.id} style={{ background:C.card, borderRadius:14, padding:14, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
+                    <div style={{ width:38, height:38, borderRadius:12, background:m.type==="sale"?C.greenBg:C.blueBg, display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, flexShrink:0 }}>
+                      {m.type==="sale"?"📤":"📥"}
+                    </div>
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ display:"flex", gap:6, alignItems:"center", flexWrap:"wrap" }}>
+                        <span style={{ fontWeight:700, fontSize:14, color:C.text, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", maxWidth:130 }}>{p?.name||"Producto eliminado"}</span>
+                        <Chip color={m.type==="sale"?C.green:C.blue} bg={m.type==="sale"?C.greenBg:C.blueBg}>{m.type==="sale"?"Venta":"Compra"}</Chip>
+                        {pm && <Chip color={pm.color} bg={C.greenBg}>{pm.label}</Chip>}
+                      </div>
+                      <p style={{ margin:"3px 0 0", color:C.muted, fontSize:12 }}>{fmtDate(m.date)} · {m.qty} uds · {m.note}</p>
+                    </div>
+                    <span style={{ fontWeight:800, color:m.type==="sale"?C.green:C.blue, fontSize:15, whiteSpace:"nowrap" }}>{fmt(m.total)}</span>
+                    {isAdmin && <div style={{ display:"flex", gap:6 }}>
+                      <button onClick={()=>{ setEditMovement(m); setShowMovForm(m.type); }} style={btnGhost(C.blue,C.blueBg,{padding:"5px 8px",fontSize:12})}>✏️</button>
+                      <button onClick={()=>deleteMovement(m)} style={btnGhost(C.red,C.redBg,{padding:"5px 8px",fontSize:12})}>🗑</button>
+                    </div>}
+                  </div>
+                );})}
+                {filtMovements.length===0 && <Card style={{ textAlign:"center", padding:24 }}><p style={{ color:C.muted, fontSize:13 }}>Sin movimientos.</p></Card>}
+              </div>
+            </div>}
+
+            {/* RENTABILITY */}
+            {tab==="rentability" && <div>
+              <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>📊 Rentabilidad</h2>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
+                <StatCard label="Ingresos" value={fmt(totalSales)} color={C.green} bg={C.greenBg} icon="💰" />
+                <StatCard label="Costo ventas" value={fmt(totalCost)} color={C.orange} bg={C.orangeBg} icon="📦" />
+                <StatCard label="Ganancia bruta" value={fmt(totalProfit)} color={totalProfit>=0?C.green:C.red} bg={totalProfit>=0?C.greenBg:C.redBg} icon="💵" />
+                <StatCard label="Margen prom." value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
+              </div>
+              <Card style={{ marginBottom:16, overflowX:"auto" }}>
+                <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📋 Detalle por producto</p>
+                {products.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:16 }}>Sin datos</p> :
+                <table style={{ width:"100%", borderCollapse:"collapse", fontSize:12 }}>
+                  <thead><tr style={{ borderBottom:`2px solid ${C.border}` }}>
+                    {["Producto","Vendido","Ingresos","Ganancia","Margen","Stock"].map(h=>(
+                      <th key={h} style={{ color:C.muted, fontWeight:700, padding:"8px", textAlign:"left", whiteSpace:"nowrap" }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>{rentData.map((p,i)=>(
+                    <tr key={p.id} style={{ borderBottom:`1px solid ${C.border}`, background:i%2===0?"transparent":C.card2 }}>
+                      <td style={{ padding:"10px 8px" }}><div style={{ display:"flex", alignItems:"center", gap:8 }}><ProductAvatar product={p} size={26} /><span style={{ color:C.text, fontWeight:600 }}>{p.name}</span></div></td>
+                      <td style={{ padding:"10px 8px", color:C.text2 }}>{p.sold}</td>
+                      <td style={{ padding:"10px 8px", color:C.blue, fontWeight:600 }}>{fmt(p.revenue)}</td>
+                      <td style={{ padding:"10px 8px", color:p.profit>=0?C.green:C.red, fontWeight:700 }}>{fmt(p.profit)}</td>
+                      <td style={{ padding:"10px 8px" }}><Chip color={Number(p.margin)>30?C.green:Number(p.margin)>15?C.orange:C.red} bg={Number(p.margin)>30?C.greenBg:Number(p.margin)>15?C.orangeBg:C.redBg}>{p.margin}%</Chip></td>
+                      <td style={{ padding:"10px 8px", color:p.stock<=p.minStock?C.red:C.text2, fontWeight:p.stock<=p.minStock?700:400 }}>{p.stock}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>}
+              </Card>
+              <Card>
+                <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>💡 Sugerencias</p>
+                {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).map(p=>(
+                  <div key={`slow-${p.id}`} style={{ background:C.orangeBg, border:`1px solid ${C.orange}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
+                    <ProductAvatar product={p} size={32} />
+                    <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — stock parado</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Tiene {p.stock} uds y vendió solo {p.sold}. Considerá una promoción.</p></div>
+                  </div>
+                ))}
+                {lowStock.map(p=>(
+                  <div key={`low-${p.id}`} style={{ background:C.redBg, border:`1px solid ${C.red}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
+                    <ProductAvatar product={p} size={32} />
+                    <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — reponer urgente</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Solo {p.stock} uds (mín: {p.minStock}). Proveedor: {p.supplier||"N/A"}.</p></div>
+                  </div>
+                ))}
+                {rentData.filter(p=>Number(p.margin)<15&&p.sold>0).map(p=>(
+                  <div key={`margin-${p.id}`} style={{ background:C.blueBg, border:`1px solid ${C.blue}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
+                    <ProductAvatar product={p} size={32} />
+                    <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — margen bajo ({p.margin}%)</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Revisá el precio o negociá con el proveedor.</p></div>
+                  </div>
+                ))}
+                {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).length===0&&lowStock.length===0&&rentData.filter(p=>Number(p.margin)<15&&p.sold>0).length===0 && (
+                  <div style={{ background:C.greenBg, borderRadius:12, padding:16, textAlign:"center" }}>
+                    <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:14 }}>✅ Todo en orden</p>
+                  </div>
+                )}
+              </Card>
+            </div>}
+
+          </>)}
+        </div>
+      </div>
+
+      {/* BOTTOM NAV — solo mobile */}
+      {isMobile && BottomNav}
 
       {/* MODALS */}
       {showScanner    && <BarcodeScanner onDetect={handleBarcode} onClose={()=>setShowScanner(false)} />}
