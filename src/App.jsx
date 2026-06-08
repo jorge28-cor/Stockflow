@@ -990,7 +990,7 @@ function MainApp({ session }) {
                 <StatCard label="Ingresos" value={fmt(totalSales)} color={C.green} bg={C.greenBg} icon="💰" />
                 <StatCard label="Costo ventas" value={fmt(totalCost)} color={C.orange} bg={C.orangeBg} icon="📦" />
                 <StatCard label="Ganancia bruta" value={fmt(totalProfit)} color={totalProfit>=0?C.green:C.red} bg={totalProfit>=0?C.greenBg:C.redBg} icon="💵" />
-                <StatCard label="Margen prom." value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
+                <StatCard label="Margen" value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
               </div>
               <Card style={{ marginBottom:16, overflowX:"auto" }}>
                 <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📋 Detalle por producto</p>
