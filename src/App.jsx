@@ -1,14 +1,15 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  collection, addDoc, getDocs, updateDoc, deleteDoc, doc, setDoc
+  collection, addDoc, getDocs, updateDoc, deleteDoc, doc, setDoc, onSnapshot, serverTimestamp,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import {
+  login, logout, onSessionChange,
+  createUser, createNegocio, listNegocios, listUsers,
+  updateNegocio, updateUserProfile, db,
+} from "./firebase";
 
-// ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const USERS = [
-  { id:"U001", name:"Admin", email:"admin@controlpro.com", password:"admin2024", role:"admin" },
-  { id:"U002", name:"Empleado", email:"emp@controlpro.com", password:"emp2024", role:"employee" },
-];
+const SUPERADMIN_EMAIL = "jorge21sb@gmail.com";
+
 const PAY_METHODS = [
   { id:"efectivo", label:"💵 Efectivo", color:"#00a86b" },
   { id:"tarjeta", label:"💳 Tarjeta", color:"#5c6bc0" },
@@ -83,27 +84,34 @@ const btnGhost = (color, bg, extra={}) => ({
   fontWeight:700, cursor:"pointer", fontSize:13, fontFamily:"inherit", ...extra,
 });
 
-// ─── FIREBASE ─────────────────────────────────────────────────────────────────
+
+
+// ─── FIREBASE MULTI-TENANT ────────────────────────────────────────────────────
 const COL = { products:"productos", movements:"movimientos", categories:"categorias" };
-async function fbGetAll(col) {
-  try { const s=await getDocs(collection(db,col)); return s.docs.map(d=>({id:d.id,...d.data()})); }
+async function fbGetAll(bId, col) {
+  try { const s=await getDocs(collection(db,"negocios",bId,col)); return s.docs.map(d=>({id:d.id,...d.data()})); }
   catch(e) { console.error(e); return []; }
 }
-async function fbAdd(col,data) {
-  try { const r=await addDoc(collection(db,col),data); return r.id; }
+async function fbAdd(bId, col, data) {
+  try { const r=await addDoc(collection(db,"negocios",bId,col),{...data,creadoEn:serverTimestamp()}); return r.id; }
   catch(e) { console.error(e); return null; }
 }
-async function fbUpdate(col,id,data) {
-  try { await updateDoc(doc(db,col,id),data); return true; }
+async function fbUpdate(bId, col, id, data) {
+  try { await updateDoc(doc(db,"negocios",bId,col,id),data); return true; }
   catch(e) { console.error(e); return false; }
 }
-async function fbDelete(col,id) {
-  try { await deleteDoc(doc(db,col,id)); return true; }
+async function fbDelete(bId, col, id) {
+  try { await deleteDoc(doc(db,"negocios",bId,col,id)); return true; }
   catch(e) { console.error(e); return false; }
 }
-async function fbSet(col,id,data) {
-  try { await setDoc(doc(db,col,id),data); return true; }
+async function fbSet(bId, col, id, data) {
+  try { await setDoc(doc(db,"negocios",bId,col,id),data); return true; }
   catch(e) { console.error(e); return false; }
+}
+function fbListen(bId, col, cb) {
+  return onSnapshot(collection(db,"negocios",bId,col), s=>{
+    cb(s.docs.map(d=>({id:d.id,...d.data()})));
+  });
 }
 
 // ─── LOGO ─────────────────────────────────────────────────────────────────────
@@ -155,7 +163,7 @@ function Card({ children, style={} }) {
 
 function Modal({ title, onClose, children, wide }) {
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(26,46,26,0.4)", zIndex:200, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
+    <div style={{ position:"fixed", inset:0, background:"rgba(26,46,26,0.4)", backdropFilter:"blur(4px)", zIndex:200, display:"flex", alignItems:"flex-end", justifyContent:"center" }}
       onClick={e=>e.target===e.currentTarget&&onClose()}>
       <div style={{ background:C.card, borderRadius:"24px 24px 0 0", width:"100%", maxWidth:wide?700:520, maxHeight:"94dvh", overflow:"auto", boxShadow:C.shadowMd }}>
         {/* Handle bar */}
@@ -196,14 +204,15 @@ function StatCard({ label, value, color, bg, icon }) {
   );
 }
 
+
 // ─── CATEGORY MANAGER ─────────────────────────────────────────────────────────
-function CategoryManager({ categories, onUpdate, onClose }) {
+function CategoryManager({ businessId, categories, onUpdate, onClose }) {
   const [list, setList] = useState([...categories]);
   const [newCat, setNewCat] = useState("");
   const [saving, setSaving] = useState(false);
   const add = () => { const t=newCat.trim(); if(!t||list.includes(t)) return; setList(l=>[...l,t]); setNewCat(""); };
   const remove = (c) => { if(c==="General") return alert("No se puede eliminar General."); setList(l=>l.filter(x=>x!==c)); };
-  const save = async () => { setSaving(true); await fbSet(COL.categories,"lista",{items:list}); onUpdate(list); setSaving(false); onClose(); };
+  const save = async () => { setSaving(true); await fbSet(businessId, COL.categories, "lista", {items:list}); onUpdate(list); setSaving(false); onClose(); };
   return (
     <Modal title="🗂 Mis categorías" onClose={onClose}>
       <p style={{ color:C.muted, fontSize:13, margin:"0 0 16px" }}>Personalizá las categorías de tu negocio.</p>
@@ -226,37 +235,54 @@ function CategoryManager({ categories, onUpdate, onClose }) {
   );
 }
 
-// ─── BARCODE SCANNER ─────────────────────────────────────────────────────────
+// ─── BARCODE SCANNER — ZXing ─────────────────────────────────────────────────
 function BarcodeScanner({ onDetect, onClose }) {
   const videoRef = useRef(null);
-  const streamRef = useRef(null);
-  const detectedRef = useRef(false);
+  const readerRef = useRef(null);
   const [status, setStatus] = useState("Iniciando cámara...");
   const [manual, setManual] = useState("");
-  useState(() => {
-    let qStarted=false;
-    navigator.mediaDevices?.getUserMedia({video:{facingMode:"environment"}})
-      .then(stream=>{
-        streamRef.current=stream;
-        if(videoRef.current) videoRef.current.srcObject=stream;
-        setStatus("Apuntá al código de barras");
-        const initQ=()=>{
-          if(!videoRef.current) return;
-          window.Quagga.init({inputStream:{type:"LiveStream",target:videoRef.current,constraints:{facingMode:"environment"}},decoder:{readers:["ean_reader","ean_8_reader","code_128_reader","upc_reader"]},locate:true},err=>{
-            if(!err){qStarted=true;window.Quagga.start();window.Quagga.onDetected(r=>{
-              if(detectedRef.current) return;
-              const code=r.codeResult.code;
-              if(code?.length>4){detectedRef.current=true;setStatus(`✅ ${code}`);setTimeout(()=>{onDetect(code);onClose();},400);}
-            });}
+  useEffect(() => {
+    let active = true;
+    const start = async () => {
+      try {
+        if (!window.ZXing) {
+          await new Promise((res,rej) => {
+            const s = document.createElement("script");
+            s.src = "https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js";
+            s.onload = res; s.onerror = rej;
+            document.head.appendChild(s);
           });
-        };
-        if(!window.Quagga){const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js";s.onload=initQ;document.head.appendChild(s);}
-        else initQ();
-      }).catch(()=>setStatus("Cámara no disponible — usá el código manual"));
-    return ()=>{streamRef.current?.getTracks().forEach(t=>t.stop());if(qStarted&&window.Quagga){try{window.Quagga.stop();}catch{}}};
-  },[]);
+        }
+        const hints = new Map();
+        hints.set(window.ZXing.DecodeHintType.POSSIBLE_FORMATS, [
+          window.ZXing.BarcodeFormat.EAN_13,
+          window.ZXing.BarcodeFormat.EAN_8,
+          window.ZXing.BarcodeFormat.CODE_128,
+          window.ZXing.BarcodeFormat.UPC_A,
+          window.ZXing.BarcodeFormat.QR_CODE,
+        ]);
+        const reader = new window.ZXing.BrowserMultiFormatReader(hints);
+        readerRef.current = reader;
+        setStatus("Apuntá al código de barras");
+        const devices = await window.ZXing.BrowserCodeReader.listVideoInputDevices();
+        const back = devices.find(d => /back|rear|environment/i.test(d.label)) || devices[0];
+        if (!videoRef.current || !active) return;
+        reader.decodeFromVideoDevice(back?.deviceId, videoRef.current, (result) => {
+          if (!active || !result) return;
+          const code = result.getText();
+          setStatus(`✅ ${code}`);
+          active = false;
+          setTimeout(() => { onDetect(code); onClose(); }, 300);
+        });
+      } catch(e) {
+        setStatus("Cámara no disponible — usá el código manual");
+      }
+    };
+    start();
+    return () => { active = false; try { readerRef.current?.reset(); } catch{} };
+  }, []);
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.7)", zIndex:999, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
+    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", zIndex:999, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
       <div style={{ background:C.card, borderRadius:24, padding:24, width:"100%", maxWidth:340, boxShadow:C.shadowMd }}>
         <div style={{ display:"flex", justifyContent:"space-between", marginBottom:16 }}>
           <span style={{ color:C.text, fontWeight:700, fontSize:16 }}>📷 Escáner de código</span>
@@ -265,13 +291,15 @@ function BarcodeScanner({ onDetect, onClose }) {
         <div style={{ background:"#000", borderRadius:16, overflow:"hidden", position:"relative", aspectRatio:"4/3", marginBottom:14 }}>
           <video ref={videoRef} autoPlay playsInline muted style={{ width:"100%", height:"100%", objectFit:"cover" }} />
           <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", pointerEvents:"none" }}>
-            <div style={{ width:"70%", height:80, border:`2.5px solid ${C.green}`, borderRadius:10, boxShadow:`0 0 0 9999px rgba(0,0,0,0.5)` }} />
+            <div style={{ width:"70%", height:80, border:`2.5px solid ${C.green}`, borderRadius:10, boxShadow:"0 0 0 9999px rgba(0,0,0,0.5)" }} />
           </div>
           <div style={{ position:"absolute", bottom:0, left:0, right:0, textAlign:"center", color:"#fff", fontSize:12, background:"rgba(0,0,0,0.5)", padding:"6px 0" }}>{status}</div>
         </div>
         <p style={{ color:C.muted, fontSize:12, textAlign:"center", marginBottom:10 }}>O ingresá el código manualmente:</p>
         <div style={{ display:"flex", gap:8 }}>
-          <input value={manual} onChange={e=>setManual(e.target.value)} onKeyDown={e=>e.key==="Enter"&&manual.trim()&&(onDetect(manual.trim()),onClose())} placeholder="Código..." style={{ ...inp, flex:1 }} />
+          <input value={manual} onChange={e=>setManual(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&manual.trim()&&(onDetect(manual.trim()),onClose())}
+            placeholder="Código..." style={{ ...inp, flex:1 }} />
           <button onClick={()=>manual.trim()&&(onDetect(manual.trim()),onClose())} style={btnPrimary({padding:"12px 16px"})}>OK</button>
         </div>
       </div>
@@ -535,26 +563,24 @@ function ProductSearchInput({ products, value, onChange }) {
           ))}
         </div>
       )}
-      {open && <div style={{ position:"fixed", inset:0, zIndex:299 }} onClick={() => setOpen(false)} />}
+      {open && <div style={{ position:"fixed", inset:0, zIndex:1, background:"transparent" }} onClick={()=>setOpen(false)} />}
     </div>
   );
 }
 
 // ─── MOVEMENT FORM ────────────────────────────────────────────────────────────
 function MovementForm({ type, products, preselected, editData, onSave, onClose, saving }) {
-  const [productId, setProductId] = useState(editData?.productId || preselected?.id || "");
+  const [productId, setProductId] = useState(editData?.productId||preselected?.id||products[0]?.id||"");
   const [qty, setQty] = useState(editData?.qty?.toString()||"1");
   const [note, setNote] = useState(editData?.note||"");
   const [date, setDate] = useState(editData?.date||todayStr());
   const [priceType, setPriceType] = useState("retail");
   const [payMethod, setPayMethod] = useState(editData?.payMethod||"efectivo");
-  const [customPrice, setCustomPrice] = useState("");
-  const isSale = type === "sale";
-  const product = products.find(p => p.id === productId);
-  const autoPrice = isSale
-    ? (priceType === "wholesale" ? product?.priceWholesale : product?.price)
-    : product?.cost;
-  const unitPrice = customPrice !== "" ? Number(customPrice) : (autoPrice || 0);
+  const [customPrice, setCustomPrice] = useState(editData?.unitPrice?.toString()||"");
+  const isSale=type==="sale";
+  const product=products.find(p=>p.id===productId);
+  const autoPrice=isSale?(priceType==="wholesale"?product?.priceWholesale:product?.price):product?.cost;
+  const unitPrice=customPrice!==""?Number(customPrice):(autoPrice||0);
   const total=product?Number(qty)*unitPrice:0;
   const isEdit=!!editData;
   return (
@@ -576,11 +602,11 @@ function MovementForm({ type, products, preselected, editData, onSave, onClose, 
         <div style={{ flex:1 }}><Field label="Cantidad"><input style={inp} type="number" min="1" value={qty} onChange={e=>setQty(e.target.value)} /></Field></div>
         <div style={{ flex:1 }}><Field label="Fecha"><input style={inp} type="date" value={date} onChange={e=>setDate(e.target.value)} /></Field></div>
       </div>
-      <Field label={isSale ? "💲 Precio de venta (por unidad)" : "💲 Precio de compra (por unidad)"}>
+      {!isSale && <Field label="💲 Precio de compra (por unidad)">
         <input style={inp} type="number" min="0" value={customPrice}
-          onChange={e => setCustomPrice(e.target.value)}
-          placeholder={`${isSale ? "Precio" : "Costo"} guardado: ${fmt(autoPrice||0)}`} />
-      </Field>
+          onChange={e=>setCustomPrice(e.target.value)}
+          placeholder={`Costo guardado: $${autoPrice||0}`} />
+      </Field>}
       <Field label="Método de pago">
         <div style={{ display:"flex", gap:6, flexWrap:"wrap" }}>
           {PAY_METHODS.map(m=>(
@@ -658,11 +684,108 @@ function CashClose({ movements, products, onClose }) {
 }
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
-function Login({ onLogin }) {
-  const [email, setEmail] = useState("admin@controlpro.com");
-  const [pass, setPass] = useState("admin2024");
+
+
+// ─── SUPERADMIN PANEL ─────────────────────────────────────────────────────────
+function SuperadminPanel() {
+  const [tab, setTab] = useState("negocios");
+  const [negocios, setNegocios] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({});
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => { setNegocios(await listNegocios()); setUsers(await listUsers()); }, []);
+  useEffect(() => { load(); }, [load]);
+  const saveNeg = async () => { setLoading(true); try { await createNegocio(form); await load(); setModal(null); } catch(e){ alert(e.message); } setLoading(false); };
+  const saveUsr = async () => { setLoading(true); try { await createUser(form); await load(); setModal(null); } catch(e){ alert(e.message); } setLoading(false); };
+  return (
+    <div>
+      <div style={{ display:"flex", gap:8, marginBottom:20, flexWrap:"wrap" }}>
+        {["negocios","usuarios"].map(t=>(
+          <button key={t} onClick={()=>setTab(t)} style={{ ...btnSecondary(), background:tab===t?C.greenBg:C.card2, borderColor:tab===t?C.green:C.border2, color:tab===t?C.green:C.text2 }}>
+            {t==="negocios"?"🏢 Negocios":"👥 Usuarios"}
+          </button>
+        ))}
+        <button onClick={()=>{ setForm(tab==="negocios"?{}:{rol:"empleado"}); setModal(tab==="negocios"?"negocio":"user"); }}
+          style={{ ...btnPrimary({padding:"10px 16px",fontSize:14}), marginLeft:"auto" }}>
+          + Nuevo {tab==="negocios"?"negocio":"usuario"}
+        </button>
+      </div>
+      {tab==="negocios" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {negocios.length===0 && <Card style={{ textAlign:"center", padding:28 }}><p style={{ color:C.muted }}>Sin negocios aún</p></Card>}
+          {negocios.map(n=>(
+            <Card key={n.id}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+                <div><p style={{ margin:0, fontWeight:800, fontSize:15, color:C.text }}>🏢 {n.nombre}</p><p style={{ margin:"4px 0 0", fontSize:11, color:C.muted }}>{n.id}</p></div>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  <Chip color={C.blue} bg={C.blueBg}>{n.plan}</Chip>
+                  <Chip color={n.activo?C.green:C.red} bg={n.activo?C.greenBg:C.redBg}>{n.activo?"Activo":"Inactivo"}</Chip>
+                  <button onClick={async()=>{ await updateNegocio(n.id,{activo:!n.activo}); load(); }} style={btnGhost(n.activo?C.red:C.green, n.activo?C.redBg:C.greenBg, {padding:"6px 10px",fontSize:12})}>{n.activo?"Desactivar":"Activar"}</button>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+      {tab==="usuarios" && (
+        <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+          {users.length===0 && <Card style={{ textAlign:"center", padding:28 }}><p style={{ color:C.muted }}>Sin usuarios aún</p></Card>}
+          {users.map(u=>{ const neg=negocios.find(n=>n.id===u.businessId); return (
+            <Card key={u.uid}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
+                <div><p style={{ margin:0, fontWeight:800, fontSize:15, color:C.text }}>{u.nombre}</p><p style={{ margin:"3px 0 0", fontSize:12, color:C.muted }}>{u.email} · {neg?.nombre||u.businessId||"—"}</p></div>
+                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                  <Chip color={u.rol==="admin"?C.blue:C.yellow} bg={u.rol==="admin"?C.blueBg:C.yellowBg}>{u.rol}</Chip>
+                  <Chip color={u.activo?C.green:C.red} bg={u.activo?C.greenBg:C.redBg}>{u.activo?"Activo":"Inactivo"}</Chip>
+                  <button onClick={async()=>{ await updateUserProfile(u.uid,{activo:!u.activo}); load(); }} style={btnGhost(u.activo?C.red:C.green, u.activo?C.redBg:C.greenBg, {padding:"6px 10px",fontSize:12})}>{u.activo?"Desactivar":"Activar"}</button>
+                </div>
+              </div>
+            </Card>
+          );})}
+        </div>
+      )}
+      {modal==="negocio" && (
+        <Modal title="🏢 Nuevo negocio" onClose={()=>setModal(null)}>
+          <Field label="Nombre *"><input style={inp} value={form.nombre||""} onChange={e=>setForm({...form,nombre:e.target.value})}/></Field>
+          <Field label="Descripción"><input style={inp} value={form.descripcion||""} onChange={e=>setForm({...form,descripcion:e.target.value})}/></Field>
+          <Field label="Plan"><select style={inp} value={form.plan||"basic"} onChange={e=>setForm({...form,plan:e.target.value})}><option value="basic">Basic</option><option value="pro">Pro</option><option value="enterprise">Enterprise</option></select></Field>
+          <button onClick={saveNeg} disabled={loading||!form.nombre} style={{ ...btnPrimary(), width:"100%" }}>{loading?"Creando...":"Crear negocio →"}</button>
+        </Modal>
+      )}
+      {modal==="user" && (
+        <Modal title="👤 Nuevo usuario" onClose={()=>setModal(null)}>
+          <div style={{ display:"flex", gap:12 }}>
+            <div style={{ flex:1 }}><Field label="Nombre *"><input style={inp} value={form.nombre||""} onChange={e=>setForm({...form,nombre:e.target.value})}/></Field></div>
+            <div style={{ flex:1 }}><Field label="Rol"><select style={inp} value={form.rol||"empleado"} onChange={e=>setForm({...form,rol:e.target.value})}><option value="empleado">Empleado</option><option value="admin">Admin</option></select></Field></div>
+          </div>
+          <Field label="Email *"><input style={inp} type="email" value={form.email||""} onChange={e=>setForm({...form,email:e.target.value})}/></Field>
+          <Field label="Contraseña *"><input style={inp} type="password" value={form.password||""} onChange={e=>setForm({...form,password:e.target.value})}/></Field>
+          <Field label="Negocio *">
+            <select style={inp} value={form.businessId||""} onChange={e=>setForm({...form,businessId:e.target.value})}>
+              <option value="">— Seleccionar —</option>
+              {negocios.map(n=><option key={n.id} value={n.id}>{n.nombre}</option>)}
+            </select>
+          </Field>
+          <button onClick={saveUsr} disabled={loading||!form.nombre||!form.email||!form.password||!form.businessId} style={{ ...btnPrimary(), width:"100%" }}>{loading?"Creando...":"Crear usuario →"}</button>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// ─── LOGIN ────────────────────────────────────────────────────────────────────
+function Login() {
+  const [email, setEmail] = useState("");
+  const [pass, setPass] = useState("");
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
-  const go = () => { const u=USERS.find(u=>u.email===email&&u.password===pass); u?onLogin(u):setErr("Credenciales incorrectas"); };
+  const go = async () => {
+    setLoading(true); setErr("");
+    try { await login(email, pass); }
+    catch(e) { setErr(e.code==="auth/invalid-credential"?"Email o contraseña incorrectos":e.message); }
+    setLoading(false);
+  };
   return (
     <div style={{ minHeight:"100dvh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans',sans-serif", padding:24, boxSizing:"border-box" }}>
       <div style={{ width:"100%", maxWidth:380 }}>
@@ -679,10 +802,10 @@ function Login({ onLogin }) {
           <p style={{ color:C.muted, marginTop:8, fontSize:14 }}>Gestión profesional de inventario</p>
         </div>
         <div style={{ background:C.card, borderRadius:24, padding:28, boxShadow:C.shadowMd, border:`1px solid ${C.border}` }}>
-          <Field label="Correo electrónico"><input style={inp} value={email} onChange={e=>setEmail(e.target.value)} type="email" /></Field>
-          <Field label="Contraseña"><input style={inp} value={pass} onChange={e=>setPass(e.target.value)} type="password" onKeyDown={e=>e.key==="Enter"&&go()} /></Field>
+          <Field label="Correo electrónico"><input style={inp} value={email} onChange={e=>setEmail(e.target.value)} type="email" placeholder="tu@email.com"/></Field>
+          <Field label="Contraseña"><input style={inp} value={pass} onChange={e=>setPass(e.target.value)} type="password" placeholder="••••••••" onKeyDown={e=>e.key==="Enter"&&go()}/></Field>
           {err && <div style={{ background:C.redBg, border:`1px solid ${C.red}33`, borderRadius:10, padding:"10px 14px", marginBottom:16 }}><p style={{ color:C.red, fontSize:13, margin:0 }}>{err}</p></div>}
-          <button onClick={go} style={{ ...btnPrimary(), width:"100%", fontSize:16 }}>Ingresar →</button>
+          <button onClick={go} disabled={loading||!email||!pass} style={{ ...btnPrimary(), width:"100%", fontSize:16, opacity:loading||!email||!pass?0.6:1 }}>{loading?"Ingresando...":"Ingresar →"}</button>
         </div>
       </div>
     </div>
@@ -690,8 +813,12 @@ function Login({ onLogin }) {
 }
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
-export default function App() {
-  const [user, setUser] = useState(null);
+function MainApp({ session }) {
+  const { user, perfil } = session;
+  const businessId = perfil?.businessId || null;
+  const isSuperadmin = user.email === SUPERADMIN_EMAIL;
+  const isAdmin = perfil?.rol === "admin" || isSuperadmin;
+
   const [tab, setTab] = useState("dashboard");
   const [products, setProducts] = useState([]);
   const [movements, setMovements] = useState([]);
@@ -711,30 +838,31 @@ export default function App() {
   const [showCashClose, setShowCashClose] = useState(false);
   const [showQuickCash, setShowQuickCash] = useState(false);
   const [showCatManager, setShowCatManager] = useState(false);
-  const isAdmin = user?.role==="admin";
 
-  useEffect(() => { cargarTodo(); }, []);
-
-  const cargarTodo = async () => {
-    setLoading(true);
-    const [prods,movs,cats] = await Promise.all([fbGetAll(COL.products),fbGetAll(COL.movements),fbGetAll(COL.categories)]);
-    setProducts(prods);
-    setMovements(movs.sort((a,b)=>(b.date||"").localeCompare(a.date||"")));
-    if(cats.length>0&&cats[0].items) setCategories(cats[0].items);
-    console.log("✅ ControlPro cargado:",prods.length,"productos");
-    setLoading(false);
-  };
+  useEffect(() => {
+    if (!businessId) { setLoading(false); return; }
+    let u1, u2;
+    const load = async () => {
+      setLoading(true);
+      const cats = await fbGetAll(businessId, COL.categories);
+      if (cats.length>0 && cats[0].items) setCategories(cats[0].items);
+      u1 = fbListen(businessId, COL.products, data => { setProducts(data); setLoading(false); });
+      u2 = fbListen(businessId, COL.movements, data => { setMovements(data.sort((a,b)=>(b.date||"").localeCompare(a.date||""))); });
+    };
+    load();
+    return () => { u1?.(); u2?.(); };
+  }, [businessId]);
 
   const todaySales=movements.filter(m=>m.type==="sale"&&m.date===todayStr()).reduce((s,m)=>s+m.total,0);
   const totalSales=movements.filter(m=>m.type==="sale").reduce((s,m)=>s+m.total,0);
   const totalCost=movements.filter(m=>m.type==="sale").reduce((s,m)=>{ const p=products.find(pr=>pr.id===m.productId); return s+(p?.cost||0)*m.qty; },0);
   const totalProfit=totalSales-totalCost;
   const lowStock=products.filter(p=>p.stock<=p.minStock);
-  const inventoryValue=products.reduce((s,p)=>s+p.stock*p.cost,0);
+  const inventoryValue=products.reduce((s,p)=>s+p.stock*(p.cost||0),0);
   const rentData=products.map(p=>{
     const sold=movements.filter(m=>m.productId===p.id&&m.type==="sale").reduce((s,m)=>s+m.qty,0);
     const revenue=movements.filter(m=>m.productId===p.id&&m.type==="sale").reduce((s,m)=>s+m.total,0);
-    const profit=revenue-sold*p.cost;
+    const profit=revenue-sold*(p.cost||0);
     const margin=revenue?((profit/revenue)*100).toFixed(1):0;
     const rotation=sold>5?"Alta":sold>0?"Media":"Baja";
     return {...p,sold,revenue,profit,margin,rotation};
@@ -742,75 +870,63 @@ export default function App() {
 
   const saveProduct = async (data) => {
     setSaving(true);
-    const parsed={...data,price:Number(data.price),priceWholesale:Number(data.priceWholesale),cost:Number(data.cost),stock:Number(data.stock),minStock:Number(data.minStock),image:data.image||null,updatedAt:new Date().toISOString()};
-    if(editProduct){ await fbUpdate(COL.products,editProduct.id,parsed); setProducts(ps=>ps.map(p=>p.id===editProduct.id?{...p,...parsed}:p)); }
-    else { parsed.createdAt=new Date().toISOString(); const id=await fbAdd(COL.products,parsed); if(id) setProducts(ps=>[...ps,{...parsed,id}]); }
+    const parsed={...data,price:Number(data.price),priceWholesale:Number(data.priceWholesale),cost:Number(data.cost),stock:Number(data.stock),minStock:Number(data.minStock),image:data.image||null};
+    if(editProduct){ await fbUpdate(businessId,COL.products,editProduct.id,parsed); }
+    else { await fbAdd(businessId,COL.products,parsed); }
     setSaving(false); setShowProductForm(false); setEditProduct(null);
   };
 
   const saveMovement = async (data) => {
     setSaving(true);
-    const movData={...data,createdAt:new Date().toISOString()};
     if(editMovement){
       const old=movements.find(m=>m.id===editMovement.id);
       const sr=old.type==="sale"?old.qty:-old.qty;
       const oldProd=products.find(p=>p.id===old.productId);
-      if(oldProd){ await fbUpdate(COL.products,old.productId,{stock:oldProd.stock+sr}); setProducts(ps=>ps.map(p=>p.id===old.productId?{...p,stock:p.stock+sr}:p)); }
-      await fbUpdate(COL.movements,editMovement.id,movData);
-      setMovements(ms=>ms.map(m=>m.id===editMovement.id?{...m,...movData}:m));
+      if(oldProd){ await fbUpdate(businessId,COL.products,old.productId,{stock:oldProd.stock+sr}); }
+      await fbUpdate(businessId,COL.movements,editMovement.id,data);
       setEditMovement(null);
     } else {
-      const id=await fbAdd(COL.movements,movData);
-      if(id) setMovements(ms=>[{...movData,id},...ms]);
+      await fbAdd(businessId,COL.movements,data);
     }
     const product=products.find(p=>p.id===data.productId);
-    if(product){ const ns=data.type==="sale"?product.stock-data.qty:product.stock+data.qty; await fbUpdate(COL.products,data.productId,{stock:ns}); setProducts(ps=>ps.map(p=>p.id===data.productId?{...p,stock:ns}:p)); }
+    if(product){ const ns=data.type==="sale"?product.stock-data.qty:product.stock+data.qty; await fbUpdate(businessId,COL.products,data.productId,{stock:ns}); }
     setSaving(false); setShowMovForm(null); setPreselProduct(null);
   };
 
   const deleteMovement = async (mov) => {
     if(!window.confirm("¿Eliminar este movimiento?")) return;
     setSaving(true);
-    await fbDelete(COL.movements,mov.id);
-    setMovements(ms=>ms.filter(m=>m.id!==mov.id));
+    await fbDelete(businessId,COL.movements,mov.id);
     const product=products.find(p=>p.id===mov.productId);
-    if(product){ const ns=mov.type==="sale"?product.stock+mov.qty:product.stock-mov.qty; await fbUpdate(COL.products,mov.productId,{stock:ns}); setProducts(ps=>ps.map(p=>p.id===mov.productId?{...p,stock:ns}:p)); }
+    if(product){ const ns=mov.type==="sale"?product.stock+mov.qty:product.stock-mov.qty; await fbUpdate(businessId,COL.products,mov.productId,{stock:ns}); }
     setSaving(false);
   };
 
   const deleteProduct = async (id) => {
     if(!window.confirm("¿Eliminar este producto?")) return;
-    await fbDelete(COL.products,id); setProducts(ps=>ps.filter(p=>p.id!==id));
+    await fbDelete(businessId,COL.products,id);
   };
 
-  const handleBarcode = async (code) => {
-  // Primero busca en los productos ya cargados
-  const found = products.find(p => p.barcode === code);
-  if (found) {
-    setSearch(found.name);
-    setTab("products");
-    return;
-  }
-  // Si no encuentra, busca directo en Firebase
-  const todos = await fbGetAll(COL.products);
-  const foundFb = todos.find(p => p.barcode === code);
-  if (foundFb) {
-    setProducts(ps => ps.some(p => p.id === foundFb.id) ? ps : [...ps, foundFb]);
-    setSearch(foundFb.name);
-    setTab("products");
-  } else {
-    alert(`Código ${code} no registrado en el sistema.\nPodés crear el producto y asignarle este código.`);
-  }
-};
+  const handleBarcode = (code) => {
+    const clean = (v) => String(v || "").trim();
+    const p = products.find(pr => clean(pr.barcode) === clean(code));
+    if (p) { setSearch(code); setTab("products"); }
+    else { alert(`Código ${code} no encontrado`); }
+  };
 
   const filtMovements=movements.filter(m=>{ if(filterFrom&&m.date<filterFrom) return false; if(filterTo&&m.date>filterTo) return false; return true; });
 
-  if(!user) return <Login onLogin={setUser} />;
-
-  const navItems=[{id:"dashboard",icon:"◈",label:"Panel"},{id:"products",icon:"⊞",label:"Productos"},{id:"movements",icon:"⇅",label:"Movimientos"},{id:"rentability",icon:"◉",label:"Rent."}];
+  const navItems=[
+    {id:"dashboard",icon:"◈",label:"Panel"},
+    {id:"products",icon:"⊞",label:"Productos"},
+    {id:"movements",icon:"⇅",label:"Movimientos"},
+    {id:"rentability",icon:"◉",label:"Rent."},
+    ...(isSuperadmin?[{id:"superadmin",icon:"⚙",label:"Admin"}]:[]),
+  ];
 
   return (
     <div style={{ minHeight:"100dvh", background:C.bg, fontFamily:"'DM Sans',sans-serif", color:C.text, display:"flex", flexDirection:"column", maxWidth:"100vw", overflowX:"hidden" }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;700&display=swap');`}</style>
 
       {/* TOP BAR */}
       <div style={{ background:C.card, borderBottom:`1px solid ${C.border}`, padding:"12px 18px", display:"flex", justifyContent:"space-between", alignItems:"center", position:"sticky", top:0, zIndex:50, boxShadow:C.shadow, boxSizing:"border-box" }}>
@@ -824,37 +940,49 @@ export default function App() {
           {saving && <Chip color={C.yellow} bg={C.yellowBg}>💾 Guardando</Chip>}
         </div>
         <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"8px 10px",fontSize:16})}>📷</button>
-          {isAdmin && <button onClick={()=>setShowCashClose(true)} style={btnSecondary({padding:"8px 10px",fontSize:14})}>💰</button>}
+          {businessId && <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"8px 10px",fontSize:16})}>📷</button>}
+          {isAdmin && businessId && <button onClick={()=>setShowCashClose(true)} style={btnSecondary({padding:"8px 10px",fontSize:14})}>💰</button>}
           <div style={{ background:C.greenBg, borderRadius:20, padding:"6px 12px", fontSize:12, fontWeight:700, color:C.green }}>
-            {user.name}
+            {perfil?.nombre?.split(" ")[0] || user.email.split("@")[0]}
           </div>
-          <button onClick={()=>setUser(null)} style={btnSecondary({padding:"6px 10px",fontSize:12})}>Salir</button>
+          <button onClick={logout} style={btnSecondary({padding:"6px 10px",fontSize:12})}>Salir</button>
         </div>
       </div>
 
       {/* CONTENT */}
       <div style={{ flex:1, padding:"16px 16px 90px", width:"100%", maxWidth:960, margin:"0 auto", boxSizing:"border-box" }}>
 
-        {loading ? <Loader text="Cargando datos desde la nube..." /> : <>
+        {/* SUPERADMIN PAGE */}
+        {tab==="superadmin" && isSuperadmin && (
+          <div>
+            <h2 style={{ fontSize:20, fontWeight:900, margin:"0 0 16px", color:C.text }}>⚙ Panel Superadmin</h2>
+            <SuperadminPanel />
+          </div>
+        )}
+
+        {/* NO BUSINESS ASSIGNED */}
+        {tab!=="superadmin" && !businessId && (
+          <Card style={{ textAlign:"center", padding:40 }}>
+            <p style={{ fontSize:32, margin:"0 0 12px" }}>🏢</p>
+            <p style={{ color:C.text, fontWeight:700, fontSize:16, margin:"0 0 8px" }}>Sin negocio asignado</p>
+            <p style={{ color:C.muted, fontSize:13 }}>Contactá al administrador para que te asigne un negocio.</p>
+          </Card>
+        )}
+
+        {tab!=="superadmin" && businessId && (loading ? <Loader text="Cargando datos desde la nube..." /> : <>
 
         {/* ── DASHBOARD */}
         {tab==="dashboard" && <div>
-          {/* Greeting */}
           <div style={{ marginBottom:20 }}>
-            <h2 style={{ fontSize:22, fontWeight:900, margin:"0 0 2px", color:C.text }}>Hola, {user.name} 👋</h2>
+            <h2 style={{ fontSize:22, fontWeight:900, margin:"0 0 2px", color:C.text }}>Hola, {perfil?.nombre?.split(" ")[0] || "Admin"} 👋</h2>
             <p style={{ color:C.muted, margin:0, fontSize:13 }}>{new Date().toLocaleDateString("es-AR",{weekday:"long",day:"numeric",month:"long"})}</p>
           </div>
-
-          {/* Stats — 2 cols */}
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:16 }}>
             <StatCard label="Ventas hoy" value={fmt(todaySales)} color={C.green} bg={C.greenBg} icon="💰" />
             <StatCard label="Total ventas" value={fmt(totalSales)} color={C.blue} bg={C.blueBg} icon="📈" />
             <StatCard label="Ganancia" value={fmt(totalProfit)} color={C.purple} bg={C.purpleBg} icon="💵" />
             <StatCard label="Inventario" value={fmt(inventoryValue)} color={C.yellow} bg={C.yellowBg} icon="🏪" />
           </div>
-
-          {/* Low stock alert */}
           {lowStock.length>0 && (
             <div style={{ background:C.redBg, border:`1.5px solid ${C.red}33`, borderRadius:16, padding:16, marginBottom:16 }}>
               <p style={{ color:C.red, fontWeight:700, margin:"0 0 10px", fontSize:13 }}>⚠ Productos con bajo stock</p>
@@ -869,8 +997,6 @@ export default function App() {
               </div>
             </div>
           )}
-
-          {/* Empty state */}
           {products.length===0 && (
             <Card style={{ textAlign:"center", padding:32, marginBottom:16 }}>
               <p style={{ fontSize:40, margin:"0 0 10px" }}>📦</p>
@@ -878,8 +1004,6 @@ export default function App() {
               {isAdmin && <button onClick={()=>{ setTab("products"); setShowProductForm(true); }} style={btnPrimary()}>+ Agregar primer producto</button>}
             </Card>
           )}
-
-          {/* Top products */}
           {products.length>0 && (
             <Card style={{ marginBottom:16 }}>
               <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>🏆 Productos destacados</p>
@@ -896,8 +1020,6 @@ export default function App() {
               ))}
             </Card>
           )}
-
-          {/* Quick actions */}
           <div style={{ display:"flex", gap:10 }}>
             <button onClick={()=>setShowMovForm("sale")} style={{ ...btnPrimary(), flex:1, fontSize:14 }}>+ Nueva venta</button>
             {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={{ ...btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`}), flex:1, fontSize:14 }}>+ Compra</button>}
@@ -917,23 +1039,20 @@ export default function App() {
             <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Buscar producto..." style={{ ...inp, flex:1 }} />
             <button onClick={()=>setShowScanner(true)} style={btnSecondary({padding:"12px 14px"})}>📷</button>
           </div>
-          {/* Category pills */}
           <div style={{ display:"flex", gap:6, marginBottom:16, overflowX:"auto", paddingBottom:4 }}>
             {["Todas",...categories].map(c=>(
               <button key={c} onClick={()=>setFilterCat(c)}
-                style={{ background:filterCat===c?C.green:C.card, border:`1.5px solid ${filterCat===c?C.green:C.border}`, color:filterCat===c?"#fff":C.text2, borderRadius:20, padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0, boxShadow:filterCat===c?`0 2px 8px ${C.greenXL}`:C.shadow }}>
+                style={{ background:filterCat===c?C.green:C.card, border:`1.5px solid ${filterCat===c?C.green:C.border}`, color:filterCat===c?"#fff":C.text2, borderRadius:20, padding:"6px 16px", fontSize:12, cursor:"pointer", fontWeight:600, whiteSpace:"nowrap", flexShrink:0 }}>
                 {c}
               </button>
             ))}
           </div>
-
           {products.length===0 && (
             <Card style={{ textAlign:"center", padding:28 }}>
               <p style={{ color:C.muted, fontSize:14, margin:"0 0 16px" }}>No hay productos todavía.</p>
               {isAdmin && <button onClick={()=>setShowProductForm(true)} style={btnPrimary()}>+ Crear primer producto</button>}
             </Card>
           )}
-
           <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
             {products.filter(p=>{
               const ms=p.name.toLowerCase().includes(search.toLowerCase())||p.barcode?.includes(search)||p.supplier?.toLowerCase().includes(search.toLowerCase());
@@ -954,13 +1073,13 @@ export default function App() {
                     <div style={{ display:"flex", gap:12, marginTop:6, flexWrap:"wrap", alignItems:"center" }}>
                       <span style={{ color:C.green, fontWeight:800, fontSize:15 }}>{fmt(p.price)}</span>
                       <span style={{ color:isLow?C.red:C.muted, fontSize:13 }}>Stock: <strong style={{ color:isLow?C.red:C.text2 }}>{p.stock}</strong></span>
-                      <Chip color={Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red} bg={Number(margin)>30?C.greenBg:Number(margin)>15?C.yellowBg:C.redBg}>M:{margin}%</Chip>
+                      <Chip color={Number(margin)>30?C.green:Number(margin)>15?C.yellow:C.red} bg={Number(margin)>30?C.greenBg:Number(margin)>15?C.yellowBg:C.redBg}>M: {margin}%</Chip>
                     </div>
                   </div>
                   <div style={{ display:"flex", flexDirection:"column", gap:6, flexShrink:0 }}>
-                    <button onClick={()=>{ setShowMovForm("sale"); setPreselProduct(p); }} style={btnGhost(C.green,C.greenBg,{padding:"6px 10px",fontSize:12})}>Vender</button>
+                    <button onClick={()=>{ setShowMovForm("sale"); setPreselProduct(p); }} style={btnGhost(C.green,C.greenBg,{padding:"6px 10px",fontSize:12})}>Vendedor</button>
                     {isAdmin && <>
-                      <button onClick={()=>{ setEditProduct(p); setShowProductForm(true); }} style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>Editar</button>
+                      <button onClick={()=>{ setEditProduct(p); setShowProductForm(true); }} style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>Editor</button>
                       <button onClick={()=>deleteProduct(p.id)} style={btnGhost(C.red,C.redBg,{padding:"6px 10px",fontSize:12})}>Eliminar</button>
                     </>}
                   </div>
@@ -979,7 +1098,6 @@ export default function App() {
               {isAdmin && <button onClick={()=>setShowMovForm("purchase")} style={btnPrimary({background:`linear-gradient(135deg,${C.blue},#1976d2)`,padding:"9px 14px",fontSize:13})}>+ Compra</button>}
             </div>
           </div>
-          {/* Date filter */}
           <Card style={{ marginBottom:14, padding:14 }}>
             <div style={{ display:"flex", gap:10, flexWrap:"wrap", alignItems:"center" }}>
               <div style={{ display:"flex", alignItems:"center", gap:6, flex:1, minWidth:140 }}>
@@ -997,9 +1115,7 @@ export default function App() {
               <span style={{ color:C.muted, fontSize:12 }}>Compras: <strong style={{ color:C.blue }}>{fmt(filtMovements.filter(m=>m.type==="purchase").reduce((s,m)=>s+m.total,0))}</strong></span>
             </div>
           </Card>
-
           {movements.length===0 && <Card style={{ textAlign:"center", padding:28 }}><p style={{ color:C.muted }}>No hay movimientos todavía.</p></Card>}
-
           <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
             {filtMovements.map(m=>{ const p=products.find(pr=>pr.id===m.productId); const pm=PAY_METHODS.find(pm=>pm.id===m.payMethod); return (
               <div key={m.id} style={{ background:C.card, borderRadius:14, padding:14, border:`1px solid ${C.border}`, display:"flex", alignItems:"center", gap:12, boxShadow:C.shadow }}>
@@ -1021,7 +1137,7 @@ export default function App() {
                 </div>}
               </div>
             );})}
-            {filtMovements.length===0&&movements.length>0 && <Card style={{ textAlign:"center", padding:24 }}><p style={{ color:C.muted }}>Sin movimientos en este período</p></Card>}
+            {filtMovements.length===0&&movements.length>0 && <Card style={{ textAlign:"center", padding:24 }}><p style={{ color:C.muted, fontSize:13 }}>Sin movimientos en el rango seleccionado.</p></Card>}
           </div>
         </div>}
 
@@ -1034,7 +1150,6 @@ export default function App() {
             <StatCard label="Ganancia bruta" value={fmt(totalProfit)} color={C.purple} bg={C.purpleBg} icon="💵" />
             <StatCard label="Margen prom." value={`${totalSales?((totalProfit/totalSales)*100).toFixed(1):0}%`} color={C.blue} bg={C.blueBg} icon="📈" />
           </div>
-
           <Card style={{ marginBottom:16, overflowX:"auto" }}>
             <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📋 Detalle por producto</p>
             {products.length===0 ? <p style={{ color:C.muted, textAlign:"center", padding:16 }}>Sin datos</p> :
@@ -1056,7 +1171,6 @@ export default function App() {
               ))}</tbody>
             </table>}
           </Card>
-
           <Card style={{ marginBottom:16 }}>
             <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>📦 Niveles de stock</p>
             {products.map(p=>{ const pct=Math.min(100,(p.stock/Math.max(p.stock,p.minStock*3))*100); const color=p.stock<=p.minStock?C.red:p.stock<=p.minStock*1.5?C.yellow:C.green; const bg=p.stock<=p.minStock?C.redBg:p.stock<=p.minStock*1.5?C.yellowBg:C.greenBg; return (
@@ -1071,7 +1185,6 @@ export default function App() {
               </div>
             );})}
           </Card>
-
           <Card>
             <p style={{ fontWeight:800, margin:"0 0 14px", fontSize:15, color:C.text }}>💡 Sugerencias</p>
             {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).map(p=>(
@@ -1083,7 +1196,7 @@ export default function App() {
             {lowStock.map(p=>(
               <div key={`low-${p.id}`} style={{ background:C.redBg, border:`1px solid ${C.red}44`, borderRadius:12, padding:14, marginBottom:10, display:"flex", gap:12 }}>
                 <ProductAvatar product={p} size={32} />
-                <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — reponer urgente</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Solo {p.stock} uds (mín: {p.minStock}). Contactar a {p.supplier}.</p></div>
+                <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — reponer urgente</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Solo {p.stock} uds (mín: {p.minStock}). Proveedor: {p.supplier||"N/A"}.</p></div>
               </div>
             ))}
             {rentData.filter(p=>Number(p.margin)<15&&p.sold>0).map(p=>(
@@ -1092,7 +1205,7 @@ export default function App() {
                 <div><p style={{ margin:0, fontWeight:700, fontSize:13, color:C.text }}>{p.name} — margen bajo ({p.margin}%)</p><p style={{ margin:"4px 0 0", color:C.muted, fontSize:12 }}>Revisá el precio o negociá con el proveedor.</p></div>
               </div>
             ))}
-            {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).length===0&&lowStock.length===0&&rentData.filter(p=>Number(p.margin)<15&&p.sold>0).length===0&&(
+            {rentData.filter(p=>p.rotation==="Baja"&&p.stock>p.minStock*2).length===0&&lowStock.length===0&&rentData.filter(p=>Number(p.margin)<15&&p.sold>0).length===0 && (
               <div style={{ background:C.greenBg, borderRadius:12, padding:16, textAlign:"center" }}>
                 <p style={{ color:C.green, fontWeight:700, margin:0, fontSize:14 }}>✅ Todo en orden — sin sugerencias urgentes</p>
               </div>
@@ -1100,7 +1213,7 @@ export default function App() {
           </Card>
         </div>}
 
-        </>} {/* end loading */}
+        </>)} {/* end loading / businessId */}
       </div>
 
       {/* BOTTOM NAV */}
@@ -1112,7 +1225,6 @@ export default function App() {
             {tab===n.id && <div style={{ width:20, height:3, background:C.green, borderRadius:3 }} />}
           </button>
         ))}
-        {/* CAJA BUTTON */}
         <button onClick={()=>setShowQuickCash(true)} style={{ ...btnPrimary(), display:"flex", flexDirection:"column", alignItems:"center", gap:2, padding:"10px 16px", borderRadius:18, transform:"translateY(-6px)", boxShadow:`0 6px 20px ${C.greenXL}` }}>
           <span style={{ fontSize:22 }}>⚡</span>
           <span style={{ fontSize:10, fontWeight:900 }}>CAJA</span>
@@ -1125,7 +1237,32 @@ export default function App() {
       {showMovForm && <MovementForm type={showMovForm} products={products} preselected={preselProduct} editData={editMovement} onSave={saveMovement} onClose={()=>{ setShowMovForm(null); setPreselProduct(null); setEditMovement(null); }} saving={saving} />}
       {showCashClose && <CashClose movements={movements} products={products} onClose={()=>setShowCashClose(false)} />}
       {showQuickCash && <QuickCash products={products} onSell={saveMovement} onClose={()=>setShowQuickCash(false)} />}
-      {showCatManager && <CategoryManager categories={categories} onUpdate={setCategories} onClose={()=>setShowCatManager(false)} />}
+      {showCatManager && <CategoryManager businessId={businessId} categories={categories} onUpdate={setCategories} onClose={()=>setShowCatManager(false)} />}
     </div>
   );
+}
+
+// ─── ROOT ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [session, setSession] = useState(undefined);
+  useEffect(() => { const unsub = onSessionChange(setSession); return unsub; }, []);
+
+  if (session === undefined) return (
+    <div style={{ minHeight:"100dvh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center" }}>
+      <Loader text="Iniciando ControlPro..." />
+    </div>
+  );
+
+  if (!session) return <Login />;
+
+  if (!session.perfil) return (
+    <div style={{ minHeight:"100dvh", background:C.bg, display:"flex", alignItems:"center", justifyContent:"center", flexDirection:"column", gap:16, fontFamily:"DM Sans,sans-serif" }}>
+      <ControlProLogo size={60} />
+      <p style={{ color:C.text, fontWeight:700, fontSize:16 }}>Cuenta sin perfil asignado</p>
+      <p style={{ color:C.muted, fontSize:13 }}>Contactá al administrador.</p>
+      <button onClick={logout} style={btnPrimary({padding:"12px 24px"})}>Cerrar sesión</button>
+    </div>
+  );
+
+  return <MainApp session={session} />;
 }
