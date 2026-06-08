@@ -1,109 +1,92 @@
-import { C, btnPrimary, btnSecondary } from "../constants";
+// ─── PALETA CONTROLPRO — DEFINITIVA ──────────────────────────────────────────
+export const C = {
+  // Base
+  bg:       "#f0f4f0",
+  card:     "#ffffff",
+  card2:    "#f7faf7",
 
-// ─── LOGO ─────────────────────────────────────────────────────────────────────
-export function ControlProLogo({ size = 40 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <path d="M50 8L88 22L88 52C88 72 70 88 50 95C30 88 12 72 12 52L12 22Z" fill={C.greenBg} stroke={C.green} strokeWidth="2.5"/>
-      <rect x="28" y="55" width="10" height="20" rx="2" fill={C.greenXL}/>
-      <rect x="44" y="42" width="10" height="33" rx="2" fill={C.greenL}/>
-      <rect x="60" y="32" width="10" height="43" rx="2" fill={C.green}/>
-      <path d="M30 52L55 30L72 38" stroke={C.green} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M65 28L75 36L63 40" stroke={C.green} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/>
-    </svg>
-  );
-}
+  // Sidebar
+  sidebar:  "#1a2e1a",
 
-// ─── PRODUCT AVATAR ───────────────────────────────────────────────────────────
-export function ProductAvatar({ product, size = 48 }) {
-  const palettes = [
-    ["#e8f5e9","#2e7d32"], ["#e3f2fd","#1565c0"], ["#f3e5f5","#6a1b9a"],
-    ["#fff8e1","#f57f17"], ["#fce4ec","#880e4f"], ["#e0f7fa","#006064"],
-  ];
-  const [bg, fg] = palettes[(product.name || "?").charCodeAt(0) % palettes.length];
-  const initials = (product.name || "?").split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
-  if (product.image) return (
-    <img src={product.image} alt={product.name}
-      style={{ width: size, height: size, borderRadius: 12, objectFit: "cover", flexShrink: 0 }} />
-  );
-  return (
-    <div style={{ width: size, height: size, borderRadius: 12, background: bg, border: `1.5px solid ${fg}22`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-      <span style={{ color: fg, fontWeight: 900, fontSize: size * 0.33 }}>{initials}</span>
-    </div>
-  );
-}
+  // Borders
+  border:   "#e0ece0",
+  border2:  "#d0e8d0",
 
-// ─── CHIP ─────────────────────────────────────────────────────────────────────
-export function Chip({ children, color, bg }) {
-  return (
-    <span style={{ background: bg || `${color}15`, color, borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 700, whiteSpace: "nowrap" }}>
-      {children}
-    </span>
-  );
-}
+  // Tipografía
+  text:     "#1a2e1a",
+  text2:    "#4a6a4a",
+  muted:    "#7a9a7a",
 
-// ─── FIELD ────────────────────────────────────────────────────────────────────
-export function Field({ label, children }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ display: "block", color: C.muted, fontSize: 11, fontWeight: 700, marginBottom: 6, textTransform: "uppercase", letterSpacing: 0.8 }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}
+  // Verde — acento principal
+  green:    "#2e7d32",
+  greenL:   "#a5d6a7",
+  greenBg:  "#e8f5e9",
 
-// ─── CARD ─────────────────────────────────────────────────────────────────────
-export function Card({ children, style = {} }) {
-  return (
-    <div style={{ background: C.card, borderRadius: 18, padding: 18, border: `1px solid ${C.border}`, boxShadow: C.shadow, ...style }}>
-      {children}
-    </div>
-  );
-}
+  // Semánticos
+  red:      "#c62828",
+  redBg:    "#ffebee",
+  orange:   "#f57f17",
+  orangeBg: "#fff3e0",
+  blue:     "#1565c0",
+  blueBg:   "#e3f2fd",
 
-// ─── MODAL ────────────────────────────────────────────────────────────────────
-export function Modal({ title, onClose, children, wide }) {
-  return (
-    <div
-      style={{ position: "fixed", inset: 0, background: "rgba(26,46,26,0.4)", backdropFilter: "blur(4px)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center" }}
-      onClick={e => e.target === e.currentTarget && onClose()}
-    >
-      <div style={{ background: C.card, borderRadius: "24px 24px 0 0", width: "100%", maxWidth: wide ? 700 : 520, maxHeight: "94dvh", overflow: "auto", boxShadow: C.shadowMd }}>
-        <div style={{ display: "flex", justifyContent: "center", padding: "12px 0 4px" }}>
-          <div style={{ width: 40, height: 4, background: C.border2, borderRadius: 4 }} />
-        </div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 24px 0" }}>
-          <span style={{ color: C.text, fontWeight: 800, fontSize: 18 }}>{title}</span>
-          <button onClick={onClose} style={{ background: C.card2, border: "none", color: C.muted, borderRadius: 10, padding: "6px 12px", cursor: "pointer", fontSize: 15 }}>✕</button>
-        </div>
-        <div style={{ padding: "16px 24px 32px" }}>{children}</div>
-      </div>
-    </div>
-  );
-}
+  // Sombras
+  shadow:   "0 2px 12px rgba(46,125,50,0.08)",
+  shadowMd: "0 4px 20px rgba(46,125,50,0.12)",
+};
 
-// ─── LOADER ───────────────────────────────────────────────────────────────────
-export function Loader({ text = "Cargando..." }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 60, gap: 16 }}>
-      <div style={{ width: 40, height: 40, border: `3px solid ${C.border2}`, borderTop: `3px solid ${C.green}`, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-      <p style={{ color: C.muted, fontSize: 14, margin: 0 }}>{text}</p>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
-}
+// ─── MÉTODOS DE PAGO ──────────────────────────────────────────────────────────
+export const PAY_METHODS = [
+  { id: "efectivo",      label: "💵 Efectivo",      color: "#2e7d32" },
+  { id: "tarjeta",       label: "💳 Tarjeta",        color: "#1565c0" },
+  { id: "transferencia", label: "📲 Transferencia",  color: "#4a6a4a" },
+];
 
-// ─── STAT CARD ────────────────────────────────────────────────────────────────
-export function StatCard({ label, value, color, bg, icon }) {
-  return (
-    <div style={{ background: bg || C.card, borderRadius: 16, padding: 16, border: `1px solid ${color}22`, boxShadow: C.shadow, flex: 1, minWidth: 140 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        <span style={{ fontSize: 18 }}>{icon}</span>
-        <span style={{ color: C.muted, fontSize: 12, fontWeight: 600 }}>{label}</span>
-      </div>
-      <p style={{ color, fontWeight: 800, fontSize: 20, margin: 0 }}>{value}</p>
-    </div>
-  );
-}
+// ─── COLECCIONES FIRESTORE ────────────────────────────────────────────────────
+export const COL = {
+  products:   "productos",
+  movements:  "movimientos",
+  categories: "categorias",
+};
+
+// ─── SUPERADMIN ───────────────────────────────────────────────────────────────
+export const SUPERADMIN_EMAIL = "jorge21sb@gmail.com";
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+export const fmt = (n) =>
+  new Intl.NumberFormat("es-AR", {
+    style: "currency", currency: "ARS", maximumFractionDigits: 0,
+  }).format(n || 0);
+
+export const fmtDate = (d) => new Date(d).toLocaleDateString("es-AR");
+
+export const todayStr = () => new Date().toISOString().split("T")[0];
+
+export const genId = (p) => `${p}${Date.now().toString(36).toUpperCase()}`;
+
+// ─── ESTILOS BASE ─────────────────────────────────────────────────────────────
+export const inp = {
+  width: "100%", background: "#ffffff", border: "1.5px solid #d0e8d0",
+  color: "#1a2e1a", borderRadius: 12, padding: "12px 14px", fontSize: 15,
+  boxSizing: "border-box", outline: "none", fontFamily: "inherit",
+  transition: "border-color 0.2s",
+};
+
+export const btnPrimary = (extra = {}) => ({
+  background: "#2e7d32",
+  border: "none", color: "#fff", borderRadius: 14, padding: "14px 20px",
+  fontWeight: 700, cursor: "pointer", fontSize: 15, fontFamily: "inherit",
+  boxShadow: "0 4px 14px rgba(46,125,50,0.25)", ...extra,
+});
+
+export const btnSecondary = (extra = {}) => ({
+  background: "#ffffff", border: "1.5px solid #d0e8d0",
+  color: "#4a6a4a", borderRadius: 12, padding: "10px 16px",
+  fontWeight: 600, cursor: "pointer", fontSize: 14, fontFamily: "inherit", ...extra,
+});
+
+export const btnGhost = (color, bg, extra = {}) => ({
+  background: bg, border: `1.5px solid ${color}33`,
+  color, borderRadius: 10, padding: "8px 12px",
+  fontWeight: 700, cursor: "pointer", fontSize: 13, fontFamily: "inherit", ...extra,
+});
