@@ -6,7 +6,6 @@ import {
 import { db } from "../firebase";
 import { COL } from "../constants";
 
-// ─── CRUD BASE ────────────────────────────────────────────────────────────────
 export async function fbGetAll(bId, col) {
   try {
     const s = await getDocs(collection(db, "negocios", bId, col));
@@ -50,7 +49,6 @@ export function fbListen(bId, col, cb) {
   });
 }
 
-// ─── HOOK PRINCIPAL ───────────────────────────────────────────────────────────
 export function useFirestore(businessId) {
   const [products,   setProducts]   = useState([]);
   const [movements,  setMovements]  = useState([]);
@@ -58,20 +56,17 @@ export function useFirestore(businessId) {
   const [clients,    setClients]    = useState([]);
   const [suppliers,  setSuppliers]  = useState([]);
   const [expenses,   setExpenses]   = useState([]);
+  const [payments,   setPayments]   = useState([]);
   const [loading,    setLoading]    = useState(true);
 
   useEffect(() => {
     if (!businessId) { setLoading(false); return; }
-    let u1, u2, u3, u4, u5;
+    let u1, u2, u3, u4, u5, u6;
     const load = async () => {
       setLoading(true);
       const cats = await fbGetAll(businessId, COL.categories);
       if (cats.length > 0 && cats[0].items) setCategories(cats[0].items);
-
-      u1 = fbListen(businessId, COL.products, data => {
-        setProducts(data);
-        setLoading(false);
-      });
+      u1 = fbListen(businessId, COL.products, data => { setProducts(data); setLoading(false); });
       u2 = fbListen(businessId, COL.movements, data => {
         setMovements(data.sort((a, b) => (b.date || "").localeCompare(a.date || "")));
       });
@@ -84,13 +79,16 @@ export function useFirestore(businessId) {
       u5 = fbListen(businessId, COL.expenses, data => {
         setExpenses(data.sort((a, b) => (b.date || "").localeCompare(a.date || "")));
       });
+      u6 = fbListen(businessId, COL.payments, data => {
+        setPayments(data.sort((a, b) => (b.date || "").localeCompare(a.date || "")));
+      });
     };
     load();
-    return () => { u1?.(); u2?.(); u3?.(); u4?.(); u5?.(); };
+    return () => { u1?.(); u2?.(); u3?.(); u4?.(); u5?.(); u6?.(); };
   }, [businessId]);
 
   return {
     products, movements, categories, setCategories,
-    clients, suppliers, expenses, loading,
+    clients, suppliers, expenses, payments, loading,
   };
 }
