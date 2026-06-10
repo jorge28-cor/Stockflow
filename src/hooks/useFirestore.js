@@ -52,18 +52,22 @@ export function fbListen(bId, col, cb) {
 
 // ─── HOOK PRINCIPAL ───────────────────────────────────────────────────────────
 export function useFirestore(businessId) {
-  const [products, setProducts]   = useState([]);
-  const [movements, setMovements] = useState([]);
+  const [products,   setProducts]   = useState([]);
+  const [movements,  setMovements]  = useState([]);
   const [categories, setCategories] = useState(["General"]);
-  const [loading, setLoading]     = useState(true);
+  const [clients,    setClients]    = useState([]);
+  const [suppliers,  setSuppliers]  = useState([]);
+  const [expenses,   setExpenses]   = useState([]);
+  const [loading,    setLoading]    = useState(true);
 
   useEffect(() => {
     if (!businessId) { setLoading(false); return; }
-    let u1, u2;
+    let u1, u2, u3, u4, u5;
     const load = async () => {
       setLoading(true);
       const cats = await fbGetAll(businessId, COL.categories);
       if (cats.length > 0 && cats[0].items) setCategories(cats[0].items);
+
       u1 = fbListen(businessId, COL.products, data => {
         setProducts(data);
         setLoading(false);
@@ -71,10 +75,22 @@ export function useFirestore(businessId) {
       u2 = fbListen(businessId, COL.movements, data => {
         setMovements(data.sort((a, b) => (b.date || "").localeCompare(a.date || "")));
       });
+      u3 = fbListen(businessId, COL.clients, data => {
+        setClients(data.sort((a, b) => (a.name || "").localeCompare(b.name || "")));
+      });
+      u4 = fbListen(businessId, COL.suppliers, data => {
+        setSuppliers(data.sort((a, b) => (a.name || "").localeCompare(b.name || "")));
+      });
+      u5 = fbListen(businessId, COL.expenses, data => {
+        setExpenses(data.sort((a, b) => (b.date || "").localeCompare(a.date || "")));
+      });
     };
     load();
-    return () => { u1?.(); u2?.(); };
+    return () => { u1?.(); u2?.(); u3?.(); u4?.(); u5?.(); };
   }, [businessId]);
 
-  return { products, movements, categories, setCategories, loading };
+  return {
+    products, movements, categories, setCategories,
+    clients, suppliers, expenses, loading,
+  };
 }
