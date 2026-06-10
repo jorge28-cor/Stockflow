@@ -522,11 +522,23 @@ function SuperadminPanel() {
           {users.map(u=>{ const neg=negocios.find(n=>n.id===u.businessId); return (
             <Card key={u.uid}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", flexWrap:"wrap", gap:8 }}>
-                <div><p style={{ margin:0, fontWeight:800, fontSize:15, color:C.text }}>{u.nombre}</p><p style={{ margin:"3px 0 0", fontSize:12, color:C.muted }}>{u.email} · {neg?.nombre||u.businessId||"—"}</p></div>
-                <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+                <div>
+                  <p style={{ margin:0, fontWeight:800, fontSize:15, color:C.text }}>{u.nombre}</p>
+                  <p style={{ margin:"3px 0 0", fontSize:12, color:C.muted }}>{u.email} · {neg?.nombre||u.businessId||"—"}</p>
+                </div>
+                <div style={{ display:"flex", gap:8, alignItems:"center", flexWrap:"wrap" }}>
                   <Chip color={u.rol==="admin"?C.blue:C.orange} bg={u.rol==="admin"?C.blueBg:C.orangeBg}>{u.rol}</Chip>
                   <Chip color={u.activo?C.green:C.red} bg={u.activo?C.greenBg:C.redBg}>{u.activo?"Activo":"Inactivo"}</Chip>
-                  <button onClick={async()=>{ await updateUserProfile(u.uid,{activo:!u.activo}); load(); }} style={btnGhost(u.activo?C.red:C.green, u.activo?C.redBg:C.greenBg, {padding:"6px 10px",fontSize:12})}>{u.activo?"Desactivar":"Activar"}</button>
+                  <button
+                    onClick={async()=>{ await updateUserProfile(u.uid,{rol:u.rol==="admin"?"empleado":"admin"}); load(); }}
+                    style={btnGhost(C.blue,C.blueBg,{padding:"6px 10px",fontSize:12})}>
+                    {u.rol==="admin"?"→ Empleado":"→ Admin"}
+                  </button>
+                  <button
+                    onClick={async()=>{ await updateUserProfile(u.uid,{activo:!u.activo}); load(); }}
+                    style={btnGhost(u.activo?C.red:C.green, u.activo?C.redBg:C.greenBg, {padding:"6px 10px",fontSize:12})}>
+                    {u.activo?"Desactivar":"Activar"}
+                  </button>
                 </div>
               </div>
             </Card>
