@@ -22,8 +22,9 @@ import {
   serverTimestamp,
   writeBatch,
 } from "firebase/firestore";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
-// ─── Config ──────────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 const firebaseConfig = {
   apiKey: "AIzaSyC2DevBMeT80nj9NN6CDyXssSDyXUyceWA",
   authDomain: "stock-app-4afe8.firebaseapp.com",
@@ -33,35 +34,30 @@ const firebaseConfig = {
   messagingSenderId: "310499318784",
   appId: "1:310499318784:web:3589c499c939edf8d8cce5",
   measurementId: "G-YE84KR5W2N"
+
 };
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+export const storage = getStorage(app);
 
 // ─── Rutas multi-tenant ───────────────────────────────────────────────────────
-// Cada negocio vive en: negocios/{businessId}/{colección}
 export const paths = {
   negocio:    (bId)              => doc(db, "negocios", bId),
   negocios:   ()                 => collection(db, "negocios"),
-
   productos:  (bId)              => collection(db, "negocios", bId, "productos"),
   producto:   (bId, pId)         => doc(db, "negocios", bId, "productos", pId),
-
   movimientos:(bId)              => collection(db, "negocios", bId, "movimientos"),
   movimiento: (bId, mId)         => doc(db, "negocios", bId, "movimientos", mId),
-
   categorias: (bId)              => collection(db, "negocios", bId, "categorias"),
   categoria:  (bId, cId)         => doc(db, "negocios", bId, "categorias", cId),
-
-  // Usuarios globales (Firestore, no Auth)
   usuario:    (uid)              => doc(db, "usuarios", uid),
   usuarios:   ()                 => collection(db, "usuarios"),
 };
 
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
-/** Login con email/password. Devuelve { user, perfil } */
 export async function login(email, password) {
   const cred = await signInWithEmailAndPassword(auth, email, password);
   const perfil = await getUserProfile(cred.user.uid);
@@ -72,7 +68,6 @@ export async function logout() {
   await signOut(auth);
 }
 
-/** Escucha cambios de sesión; llama cb({ user, perfil } | null) */
 export function onSessionChange(cb) {
   return onAuthStateChanged(auth, async (user) => {
     if (!user) return cb(null);
@@ -88,11 +83,6 @@ export async function getUserProfile(uid) {
   return snap.exists() ? { uid, ...snap.data() } : null;
 }
 
-/**
- * Crea un usuario en Firebase Auth + perfil en Firestore.
- * Solo el superadmin debería llamar esto.
- * rol: "admin" | "empleado"
- */
 export async function createUser({ email, password, nombre, businessId, rol = "empleado" }) {
   const cred = await createUserWithEmailAndPassword(auth, email, password);
   const perfil = {
@@ -111,13 +101,11 @@ export async function updateUserProfile(uid, data) {
   await updateDoc(paths.usuario(uid), { ...data, actualizadoEn: serverTimestamp() });
 }
 
-/** Lista todos los usuarios (solo superadmin) */
 export async function listUsers() {
   const snap = await getDocs(paths.usuarios());
   return snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
 }
 
-/** Lista usuarios de un negocio */
 export async function listUsersByBusiness(businessId) {
   const q = query(paths.usuarios(), where("businessId", "==", businessId));
   const snap = await getDocs(q);
@@ -178,26 +166,21 @@ export async function deleteProducto(businessId, productoId) {
 
 export async function addMovimiento(businessId, { productoId, tipo, cantidad, nota = "", usuarioId }) {
   const batch = writeBatch(db);
-
-  // 1. Registrar movimiento
   const movRef = doc(paths.movimientos(businessId));
   batch.set(movRef, {
     productoId,
-    tipo,       // "entrada" | "salida" | "ajuste"
+    tipo,
     cantidad,
     nota,
     usuarioId,
     fecha: serverTimestamp(),
   });
-
-  // 2. Actualizar stock del producto
   const prodRef = paths.producto(businessId, productoId);
   const prodSnap = await getDoc(prodRef);
   if (!prodSnap.exists()) throw new Error("Producto no encontrado");
   const stockActual = prodSnap.data().stock ?? 0;
   const delta = tipo === "salida" ? -cantidad : cantidad;
   batch.update(prodRef, { stock: stockActual + delta, actualizadoEn: serverTimestamp() });
-
   await batch.commit();
 }
 
@@ -216,6 +199,23 @@ export async function getCategorias(businessId) {
 
 export async function addCategoria(businessId, nombre) {
   return addDoc(paths.categorias(businessId), { nombre, creadoEn: serverTimestamp() });
+}
+
+// ─── Storage — subida de imágenes ─────────────────────────────────────────────
+
+export async function uploadImage(businessId, file) {
+  try {
+    const storageRef = ref(
+      storage,
+      `negocios/${businessId}/productos/${Date.now()}_${file.name}`
+    );
+    const snapshot = await uploadBytes(storageRef, file);
+    const url = await getDownloadURL(snapshot.ref);
+    return url;
+  } catch(e) {
+    console.error("Error subiendo imagen:", e);
+    return null;
+  }
 }
 
 export { serverTimestamp, getDocs, query, where, collection, db as default };
