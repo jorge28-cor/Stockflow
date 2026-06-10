@@ -70,14 +70,24 @@ function BarcodeScanner({ onDetect, onClose }) {
 }
 
 // ─── IMAGE UPLOAD ─────────────────────────────────────────────────────────────
-function ImageUpload({ value, onChange }) {
+function ImageUpload({ value, onChange, businessId }) {
   const fileRef = useRef();
   const [urlInput, setUrlInput] = useState("");
   const [tab, setTab] = useState("upload");
-  const handleFile = (e) => {
+  const [uploading, setUploading] = useState(false);
+
+  const handleFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    const r = new FileReader(); r.onload = ev => onChange(ev.target.result); r.readAsDataURL(file);
+    if (businessId) {
+      setUploading(true);
+      const url = await uploadImage(businessId, file);
+      if (url) onChange(url);
+      setUploading(false);
+    } else {
+      const r = new FileReader(); r.onload = ev => onChange(ev.target.result); r.readAsDataURL(file);
+    }
   };
+
   return (
     <div>
       <div style={{ display:"flex", gap:8, marginBottom:12 }}>
@@ -90,10 +100,13 @@ function ImageUpload({ value, onChange }) {
         {value && <button type="button" onClick={()=>onChange(null)} style={btnGhost(C.red,C.redBg)}>🗑</button>}
       </div>
       {tab==="upload" && (
-        <div onClick={()=>fileRef.current.click()}
-          style={{ border:`2px dashed ${C.border2}`, borderRadius:14, padding:24, textAlign:"center", cursor:"pointer", background:C.card }}>
-          {value ? <img src={value} alt="preview" style={{ maxHeight:120, maxWidth:"100%", borderRadius:10, objectFit:"contain" }} />
-            : <><div style={{ fontSize:36, marginBottom:8 }}>📷</div><p style={{ color:C.muted, fontSize:13, margin:0 }}>Tocá para subir una foto</p></>}
+        <div onClick={()=>!uploading&&fileRef.current.click()}
+          style={{ border:`2px dashed ${C.border2}`, borderRadius:14, padding:24, textAlign:"center", cursor:uploading?"wait":"pointer", background:C.card }}>
+          {uploading
+            ? <><div style={{ fontSize:28, marginBottom:8 }}>⏳</div><p style={{ color:C.muted, fontSize:13, margin:0 }}>Subiendo imagen...</p></>
+            : value
+              ? <img src={value} alt="preview" style={{ maxHeight:120, maxWidth:"100%", borderRadius:10, objectFit:"contain" }} />
+              : <><div style={{ fontSize:36, marginBottom:8 }}>📷</div><p style={{ color:C.muted, fontSize:13, margin:0 }}>Tocá para subir una foto</p></>}
           <input ref={fileRef} type="file" accept="image/*" onChange={handleFile} style={{ display:"none" }} />
         </div>
       )}
